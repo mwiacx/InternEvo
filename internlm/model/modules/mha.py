@@ -614,7 +614,7 @@ class QKVPackedMHA(nn.Module):
         q = qkv[..., 0, :, :].squeeze(2)
         k = qkv[..., 1, :, :].squeeze(2)
 
-        indexes = kwargs.pop("indexes", None)
+        indexes = kwargs.pop("indexes", 0)
         self.rotary_emb(q, offsets=indexes, cache_type="query", in_place=True)
         self.rotary_emb(k, offsets=indexes, cache_type="key", in_place=True)
         # if gpc.config.model.dtype is torch.float32 and gpc.config.model.use_flash_attn:

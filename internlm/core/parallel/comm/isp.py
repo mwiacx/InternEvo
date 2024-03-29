@@ -20,6 +20,7 @@ from internlm.core.parallel.comm.utils import (DUMMY_HANDLE_CONST,
                                                reduce_scatter_raw)
 from internlm.model.modules.linear import ParallelLinearWithCommExt
 from internlm.utils.common import SchedulerHook
+from internlm.utils.utils import params_dispatch_with_condition, check_attention_argument, QKVPackType, CuSeqlenType
 
 
 @dataclass
@@ -624,13 +625,13 @@ class DistributedAttention(nn.Module):
         self.local_attn = local_attention
         self.spg = sequence_process_group
 
-    # FIXME: 单分派不能满足我们的要求，自定一个分派函数
-    @singledispatch
+    @params_dispatch_with_condition(condition=check_attention_argument)
     def forward(self, obj: object) -> torch.Tensor:
         # 使用倒数的方式避免处理 data-packed 和 data-unpacked的区别
         assert False, "Should never arrive"
 
-    @forward.register
+    @forward.register(conditions=(str(QKVPackType.QKVPACKED), str(CuSeqlenType.With)))
+    @forward.register(conditions=(str(QKVPackType.QKVPACKED), str(CuSeqlenType.WithOut)))
     def _(self, qkv: torch.Tensor, **kwargs) -> torch.Tensor:
         """forward
 
@@ -653,7 +654,8 @@ class DistributedAttention(nn.Module):
 
         return context
 
-    @forward.register
+    @forward.register(conditions=(str(QKVPackType.KVPACKED), str(CuSeqlenType.With)))
+    @forward.register(conditions=(str(QKVPackType.KVPACKED), str(CuSeqlenType.WithOut)))
     def _(self, q: torch.Tensor, kv: torch.Tensor, **kwargs) -> torch.Tensor:
         """forward
 
@@ -680,7 +682,8 @@ class DistributedAttention(nn.Module):
 
         return context
 
-    @forward.register
+    @forward.register(conditions=(str(QKVPackType.QKVSPLITED), str(CuSeqlenType.With)))
+    @forward.register(conditions=(str(QKVPackType.QKVSPLITED), str(CuSeqlenType.WithOut)))
     def _(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, **kwargs) -> torch.Tensor:
         """forward
 
@@ -713,7 +716,7 @@ class DistributedAttention(nn.Module):
         return context
 
 
-def auto_wrap_distributed_attention(cls: nn.Module) -> Callable:
+def auto_wrap_distributed_attention(cls: nn.Module) -> Callable[[bool, Any, float], nn.Module]:
     """
     Wrap a local attention module to a distributed one, which will be used in the ISP parallelism.
     """

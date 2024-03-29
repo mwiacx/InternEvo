@@ -7,7 +7,7 @@ This file implements support for the attention operators.
 """
 
 import math
-from functools import partial, singledispatch
+from functools import partial
 from typing import Callable, Tuple
 
 import torch
@@ -16,20 +16,15 @@ from torch import nn
 
 from internlm.core.context import global_context as gpc
 from internlm.core.parallel.comm.isp import auto_wrap_distributed_attention
+from internlm.utils.utils import params_dispatch_with_condition, check_attention_argument, QKVPackType, CuSeqlenType
 
 try:
-    from flash_attn.flash_attn_interface import \
-        flash_attn_func as __flash_fixedlen_qkvsplited_func
-    from flash_attn.flash_attn_interface import \
-        flash_attn_kvpacked_func as __flash_fixedlen_kvpacked_func
-    from flash_attn.flash_attn_interface import \
-        flash_attn_qkvpacked_func as __flash_fixedlen_qkvpacked_func
-    from flash_attn.flash_attn_interface import \
-        flash_attn_varlen_func as __flash_varlen_qkvsplited_func
-    from flash_attn.flash_attn_interface import \
-        flash_attn_varlen_kvpacked_func as __flash_varlen_kvpacked_func
-    from flash_attn.flash_attn_interface import \
-        flash_attn_varlen_qkvpacked_func as __flash_varlen_qkvpacked_func
+    from flash_attn.flash_attn_interface import flash_attn_func as __flash_fixedlen_qkvsplited_func
+    from flash_attn.flash_attn_interface import flash_attn_kvpacked_func as __flash_fixedlen_kvpacked_func
+    from flash_attn.flash_attn_interface import flash_attn_qkvpacked_func as __flash_fixedlen_qkvpacked_func
+    from flash_attn.flash_attn_interface import flash_attn_varlen_func as __flash_varlen_qkvsplited_func
+    from flash_attn.flash_attn_interface import flash_attn_varlen_kvpacked_func as __flash_varlen_kvpacked_func
+    from flash_attn.flash_attn_interface import flash_attn_varlen_qkvpacked_func as __flash_varlen_qkvpacked_func
 
     flash_attn_impl = True
 except (ModuleNotFoundError, ImportError):
@@ -148,9 +143,8 @@ class SelfAttention(nn.Module):
         self.softmax_scale = softmax_scale
         self.dropout = nn.Dropout(attention_dropout)
 
-    # FIXME: 单分派不能满足我们的要求，自定一个分派函数
-    @singledispatch
-    def forward(self, obj: object):
+    @params_dispatch_with_condition(condition=check_attention_argument)
+    def forward(self):
         """Implements the multihead softmax attention.
         Arguments
         ---------
@@ -161,7 +155,7 @@ class SelfAttention(nn.Module):
         """
         assert False, "Never arrive here"
 
-    @forward.register
+    @forward.register(conditions=(str(QKVPackType.QKVPACKED), str(CuSeqlenType.WithOut)))
     def _(self, qkv, softmax_scale=None, causal=None, return_attn_probs=False, key_padding_mask=None):
         softmax_scale = self.softmax_scale if softmax_scale is None else softmax_scale
         causal = self.causal if causal is None else causal
@@ -171,7 +165,7 @@ class SelfAttention(nn.Module):
         else:
             return __torch_fixedlen_qkvpacked_attn(qkv, self.dropout, softmax_scale, causal, key_padding_mask)
 
-    @forward.register
+    @forward.register(conditions=(str(QKVPackType.KVPACKED), str(CuSeqlenType.WithOut)))
     def _(self, q, kv, softmax_scale=None, causal=False, return_attn_probs=False, key_padding_mask=None):
         softmax_scale = self.softmax_scale if softmax_scale is None else softmax_scale
         causal = self.causal if causal is None else causal
@@ -181,7 +175,7 @@ class SelfAttention(nn.Module):
         else:
             return __torch_fixedlen_kvpacked_attn(q, kv, self.dropout, softmax_scale, causal, key_padding_mask)
 
-    @forward.register
+    @forward.register(conditions=(str(QKVPackType.QKVSPLITED), str(CuSeqlenType.WithOut)))
     def _(self, q, k, v, softmax_scale=None, causal=False, return_attn_probs=False, key_padding_mask=None):
         softmax_scale = self.softmax_scale if softmax_scale is None else softmax_scale
         causal = self.causal if causal is None else causal
@@ -191,7 +185,7 @@ class SelfAttention(nn.Module):
         else:
             return __torch_nyi_attn(q, k, v, self.dropout, softmax_scale, causal, key_padding_mask)
 
-    @forward.register
+    @forward.register(conditions=(str(QKVPackType.QKVPACKED), str(CuSeqlenType.With)))
     def _(
         self,
         qkv,
@@ -212,7 +206,7 @@ class SelfAttention(nn.Module):
         else:
             return __torch_nyi_attn(qkv, cu_seqlens, max_seqlen, self.dropout, softmax_scale, causal, key_padding_mask)
 
-    @forward.register
+    @forward.register(conditions=(str(QKVPackType.KVPACKED), str(CuSeqlenType.With)))
     def _(
         self,
         q,
@@ -256,7 +250,7 @@ class SelfAttention(nn.Module):
                 key_padding_mask,
             )
 
-    @forward.register
+    @forward.register(conditions=(str(QKVPackType.QKVSPLITED), str(CuSeqlenType.With)))
     def _(
         self,
         q,
@@ -323,7 +317,7 @@ class CrossAttention(nn.Module):
         self.drop = nn.Dropout(attention_dropout)
 
     # FIXME: 单分派不能满足我们的要求，自定一个分派函数
-    @singledispatch
+    @params_dispatch_with_condition(condition=check_attention_argument)
     def forward(self, obj: object):
         """Implements the multihead softmax attention.
         Arguments
@@ -335,7 +329,7 @@ class CrossAttention(nn.Module):
         """
         assert False, "Never arrive here"
 
-    @forward.register
+    @forward.register(conditions=(str(QKVPackType.KVPACKED), str(CuSeqlenType.WithOut)))
     def _(self, q, kv, softmax_scale=None, causal=False, return_attn_probs=False, key_padding_mask=None):
         softmax_scale = self.softmax_scale if softmax_scale is None else softmax_scale
         causal = self.causal if causal is None else causal
@@ -345,7 +339,7 @@ class CrossAttention(nn.Module):
         else:
             return __torch_fixedlen_kvpacked_attn(q, kv, self.dropout, softmax_scale, causal, key_padding_mask)
 
-    @forward.register
+    @forward.register(conditions=(str(QKVPackType.QKVSPLITED), str(CuSeqlenType.WithOut)))
     def _(self, q, k, v, softmax_scale=None, causal=False, return_attn_probs=False, key_padding_mask=None):
         softmax_scale = self.softmax_scale if softmax_scale is None else softmax_scale
         causal = self.causal if causal is None else causal
@@ -355,7 +349,7 @@ class CrossAttention(nn.Module):
         else:
             return __torch_nyi_attn(q, k, v, self.dropout, softmax_scale, causal, key_padding_mask)
 
-    @forward.register
+    @forward.register(conditions=(str(QKVPackType.KVPACKED), str(CuSeqlenType.With)))
     def _(
         self,
         q,
@@ -399,7 +393,7 @@ class CrossAttention(nn.Module):
                 key_padding_mask,
             )
 
-    @forward.register
+    @forward.register(conditions=(str(QKVPackType.QKVSPLITED), str(CuSeqlenType.With)))
     def _(
         self,
         q,

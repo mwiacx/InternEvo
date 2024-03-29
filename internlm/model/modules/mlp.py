@@ -37,8 +37,12 @@ class FeedForward(nn.Module):
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None,
         multiple_of: int = 256,
+        activation_type: str = "swiglu"
     ):
         super().__init__()
+
+        # TODO: support gelu...
+        assert activation_type in ("swiglu"), f"Unsupported activation type: {activation_type}"
 
         hidden_features = multiple_of * ((hidden_features + multiple_of - 1) // multiple_of)
         self.w1 = new_linear("w1", in_features, hidden_features, bias, device=device, dtype=dtype)
@@ -46,7 +50,6 @@ class FeedForward(nn.Module):
         self.w3 = new_linear("w3", in_features, hidden_features, bias, device=device, dtype=dtype)
 
     def forward(self, x):
-        # TODO: support gelu...
         return self.w2(Silu(self.w1(x), self.w3(x)))
 
 
