@@ -12,14 +12,14 @@ from einops import rearrange
 from internlm.core.context import global_context as gpc
 
 try:
-    from rotary_emb import apply_rotary as __flash_apply_rotary_func
+    from rotary_emb import apply_rotary as _flash_apply_rotary_func
 
     flash_attn_impl = True
 except (ModuleNotFoundError, ImportError):
     flash_attn_impl = False
 
 
-def __torch_apply_rotary_func(
+def _torch_apply_rotary_func(
     x1: torch.Tensor,
     x2: torch.Tensor,
     cos: torch.Tensor,
@@ -46,7 +46,7 @@ def __torch_apply_rotary_func(
     return out1, out2
 
 
-def __select_apply_rotary_func(
+def _select_apply_rotary_func(
     x1: torch.Tensor,
     x2: torch.Tensor,
     cos: torch.Tensor,
@@ -56,9 +56,9 @@ def __select_apply_rotary_func(
     conj: bool = False,
 ):
     if gpc.config.model.get("use_flash_attn", False) and flash_attn_impl:
-        __flash_apply_rotary_func(x1, x2, cos, sin, out1, out2, conj)
+        _flash_apply_rotary_func(x1, x2, cos, sin, out1, out2, conj)
     else:
-        __torch_apply_rotary_func(x1, x2, cos, sin, out1, out2, conj)
+        _torch_apply_rotary_func(x1, x2, cos, sin, out1, out2, conj)
 
 
 # TODO(chenxun): 添加flashattn引用
@@ -97,7 +97,7 @@ class ApplyRotaryEmb(torch.autograd.Function):
             out_ro = out[..., :rotary_dim]
             o1, o2 = (out_ro[..., ::2], out_ro[..., 1::2]) if interleaved else out_ro.chunk(2, dim=-1)
 
-        __select_apply_rotary_func(
+        _select_apply_rotary_func(
             x1, x2, rearrange(cos[:seqlen], "s d -> s 1 d"), rearrange(sin[:seqlen], "s d -> s 1 d"), o1, o2, False
         )
 
@@ -127,7 +127,7 @@ class ApplyRotaryEmb(torch.autograd.Function):
             dx_ro = dx[..., :rotary_dim]
             dx1, dx2 = (dx_ro[..., ::2], dx_ro[..., 1::2]) if ctx.interleaved else dx_ro.chunk(2, dim=-1)
 
-        __select_apply_rotary_func(
+        _select_apply_rotary_func(
             do1, do2, rearrange(cos[:seqlen], "s d -> s 1 d"), rearrange(sin[:seqlen], "s d -> s 1 d"), dx1, dx2, True
         )
 

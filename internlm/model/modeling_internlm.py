@@ -10,19 +10,15 @@ from torch import nn
 from internlm.core.context import ParallelMode
 from internlm.core.context.parallel_context import global_context as gpc
 from internlm.core.naive_amp import set_output_attr_to_module
-from internlm.initialize.initialize_tensor import (normal_,
-                                                   scaled_init_method_normal)
+from internlm.core.parallel.comm.utils import split_forward_gather_backward
+from internlm.initialize.initialize_tensor import normal_, scaled_init_method_normal
 from internlm.model.modules.embedding import Embedding1D
 from internlm.model.modules.linear import new_linear
 from internlm.model.modules.mha import QKVPackedMHA
 from internlm.model.modules.mlp import new_fead_forward
 from internlm.model.modules.norm import new_layer_norm
-from internlm.model.modules.utils import split_forward_gather_backward
 from internlm.solver.activation_checkpoint import activation_checkpoint
 from internlm.utils.logger import get_logger
-from internlm.core.model import MODEL_INITIALIZER
-
-MODEL_TYPE = "INTERNLM"
 
 logger = get_logger(__file__)
 
@@ -379,98 +375,6 @@ class PackedFlashInternLm1D(nn.Module):
         if hasattr(self, "norm"):
             hidden_states = self.norm(hidden_states.float())
         if hasattr(self, "head"):
-            # Evaluation
-            # TODO: 统一并去掉维度
-            if hidden_states.ndim == 3:
-                hidden_states = self.head(hidden_states, gather_dim=1, tp_mode=self.tp_mode)
-            else:  # Training
-                hidden_states = self.head(hidden_states, gather_dim=0, tp_mode=self.tp_mode)
+            hidden_states = self.head(hidden_states)
 
         return hidden_states
-
-
-@MODEL_INITIALIZER.register_module(module_name=MODEL_TYPE)
-def build_model_with_cfg(
-    checkpoint=0.0,
-    dtype=torch.float,
-    embed_split_hidden=False,
-    num_layers=48,
-    hidden_size=2048,
-    vocab_size=50304,
-    embed_grad_scale=1,
-    parallel_output=True,
-    num_attention_heads=32,
-    max_position_embeddings=2048,
-    mlp_ratio=4.0,
-    residual_in_fp32=False,
-    use_dynamic_ntk_rope=False,
-    norm_type="rmsnorm",
-    drop_rate=0,
-    attn_drop_rate=0,
-    apply_post_layer_norm=False,  # pylint: disable=W0613
-    layer_norm_epsilon=1e-5,
-    is_reward=False,
-    dropout_selective_checkpoint=True,
-    use_scaled_init: bool = True,
-    use_swiglu: bool = True,
-    rope_base: int = 10000,
-):
-    """
-    Build model with config.
-
-    Args:
-        num_chunks (int): The number of partitions in pipeline parallel. 1 by default.
-        checkpoint (bool): Whether to use checkpointing to save VRAM. False by default.
-        dtype (torch.dtype): The type of data. torch.float by default.
-        embed_split_hidden (bool): Split the embedding layer in the hidden state dimention or vocabulary dimention.
-                                    False by default.
-        num_layers (int): The number of layer. 48 by default.
-        hidden_size (int): The size of hidden state. 2048 by default.
-        vocab_size (int): The size of vocabulary. 50304 by default.
-        embed_grad_scale (float): Refer to GLM-130B, for training stability. 0.1 by default.
-        parallel_output (bool): If it is necessary to collect the output of parallel computing. True by default.
-        num_attention_heads (int): The number of attention head. 32 by default.
-        mlp_ratio (int): The ratio of MLP layers. 4.0 by default.
-        residual_in_fp32 (bool): Whether to use residual in fp32. False by default. It cannot be used temporarily
-                                 because this parameter requires inconsistent data types to be passed between pipelines,
-                                 which requires significant modifications to internlm.
-        norm_type (str): Normalization type. Use RMSNorm or LayerNorm. "rmsnorm" by default.
-        drop_rate (float): The dropout rate of input hidden state. 0 by default.
-        attn_drop_rate (float): The dropout rate of attention module. 0 by default.
-        apply_post_layer_norm (bool): Whether to apply post layer norm. False by default.
-        layer_norm_epsilon (float): A value added to the denominator for numerical stability. 1e-5 by default.
-        is_reward (bool): Whether to use reward model. False by default.
-        dropout_selective_checkpoint (bool): It can only be enabled when checkpoint is disabled. True by default.
-        use_scaled_init (bool): Whether to use scaled init. True by default.
-        use_swiglu (bool): Whether to use swiglu. True by default.
-        use_flash_attn (bool): Whether to use flash-attn. True by default.
-        rope_base (int): The value of `base` for rotary position embeddings. 10000 by default.
-
-    """
-
-    cfg = dict(
-        num_layers=num_layers,
-        hidden_size=hidden_size,
-        num_attention_heads=num_attention_heads,
-        checkpoint=checkpoint,
-        dtype=dtype,
-        embed_split_hidden=embed_split_hidden,
-        vocab_size=vocab_size,
-        embed_grad_scale=embed_grad_scale,
-        parallel_output=parallel_output,
-        mlp_ratio=mlp_ratio,
-        residual_in_fp32=residual_in_fp32,
-        max_position_embeddings=max_position_embeddings,
-        use_dynamic_ntk_rope=use_dynamic_ntk_rope,
-        norm_type=norm_type,
-        drop_rate=drop_rate,
-        attn_drop_rate=attn_drop_rate,
-        layer_norm_epsilon=layer_norm_epsilon,
-        is_reward=is_reward,
-        dropout_selective_checkpoint=dropout_selective_checkpoint,
-        use_scaled_init=use_scaled_init,
-        use_swiglu=use_swiglu,
-        rope_base=rope_base,
-    )
-
-    return PackedFlashInternLm1D(**cfg)

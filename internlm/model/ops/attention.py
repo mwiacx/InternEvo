@@ -16,22 +16,39 @@ from torch import nn
 
 from internlm.core.context import global_context as gpc
 from internlm.core.parallel.comm.isp import auto_wrap_distributed_attention
-from internlm.utils.utils import params_dispatch_with_condition, check_attention_argument, QKVPackType, CuSeqlenType
+from internlm.utils.utils import (
+    CuSeqlenType,
+    QKVPackType,
+    check_attention_argument,
+    params_dispatch_with_condition,
+)
 
 try:
-    from flash_attn.flash_attn_interface import flash_attn_func as __flash_fixedlen_qkvsplited_func
-    from flash_attn.flash_attn_interface import flash_attn_kvpacked_func as __flash_fixedlen_kvpacked_func
-    from flash_attn.flash_attn_interface import flash_attn_qkvpacked_func as __flash_fixedlen_qkvpacked_func
-    from flash_attn.flash_attn_interface import flash_attn_varlen_func as __flash_varlen_qkvsplited_func
-    from flash_attn.flash_attn_interface import flash_attn_varlen_kvpacked_func as __flash_varlen_kvpacked_func
-    from flash_attn.flash_attn_interface import flash_attn_varlen_qkvpacked_func as __flash_varlen_qkvpacked_func
+    from flash_attn.flash_attn_interface import (
+        flash_attn_func as _flash_fixedlen_qkvsplited_func,
+    )
+    from flash_attn.flash_attn_interface import (
+        flash_attn_kvpacked_func as _flash_fixedlen_kvpacked_func,
+    )
+    from flash_attn.flash_attn_interface import (
+        flash_attn_qkvpacked_func as _flash_fixedlen_qkvpacked_func,
+    )
+    from flash_attn.flash_attn_interface import (
+        flash_attn_varlen_func as _flash_varlen_qkvsplited_func,
+    )
+    from flash_attn.flash_attn_interface import (
+        flash_attn_varlen_kvpacked_func as _flash_varlen_kvpacked_func,
+    )
+    from flash_attn.flash_attn_interface import (
+        flash_attn_varlen_qkvpacked_func as _flash_varlen_qkvpacked_func,
+    )
 
     flash_attn_impl = True
 except (ModuleNotFoundError, ImportError):
     flash_attn_impl = False
 
 
-def __flash_float32_compatibility_wrapper(input_idxs: Tuple, flash_func: Callable, *args, **kwargs):
+def _flash_float32_compatibility_wrapper(input_idxs: Tuple, flash_func: Callable, *args, **kwargs):
     if gpc.config.model.dtype is torch.float32:
         inputs = (args[idx] for idx in input_idxs)
         input_dtype = inputs[0].dtype
@@ -47,22 +64,20 @@ def __flash_float32_compatibility_wrapper(input_idxs: Tuple, flash_func: Callabl
 
 
 # input_idxs: 0: qkv
-__flash_varlen_qkvpacked_attn = partial(__flash_float32_compatibility_wrapper, (0), __flash_varlen_qkvpacked_func)
-__flash_fixedlen_qkvpacked_attn = partial(__flash_float32_compatibility_wrapper, (0), __flash_fixedlen_qkvpacked_func)
+_flash_varlen_qkvpacked_attn = partial(_flash_float32_compatibility_wrapper, (0), _flash_varlen_qkvpacked_func)
+_flash_fixedlen_qkvpacked_attn = partial(_flash_float32_compatibility_wrapper, (0), _flash_fixedlen_qkvpacked_func)
 # input_idxs: 0: q, 1: kv
-__flash_varlen_kvpacked_attn = partial(__flash_float32_compatibility_wrapper, (0, 1), __flash_varlen_kvpacked_func)
-__flash_fixedlen_kvpacked_attn = partial(__flash_float32_compatibility_wrapper, (0, 1), __flash_fixedlen_kvpacked_func)
+_flash_varlen_kvpacked_attn = partial(_flash_float32_compatibility_wrapper, (0, 1), _flash_varlen_kvpacked_func)
+_flash_fixedlen_kvpacked_attn = partial(_flash_float32_compatibility_wrapper, (0, 1), _flash_fixedlen_kvpacked_func)
 # input_idxs: 0: q, 1: k, 2: v
-__flash_varlen_qkvsplited_attn = partial(
-    __flash_float32_compatibility_wrapper, (0, 1, 2), __flash_varlen_qkvsplited_func
-)
-__flash_fixedlen_qkvsplited_attn = partial(
-    __flash_float32_compatibility_wrapper, (0, 1, 2), __flash_fixedlen_qkvsplited_func
+_flash_varlen_qkvsplited_attn = partial(_flash_float32_compatibility_wrapper, (0, 1, 2), _flash_varlen_qkvsplited_func)
+_flash_fixedlen_qkvsplited_attn = partial(
+    _flash_float32_compatibility_wrapper, (0, 1, 2), _flash_fixedlen_qkvsplited_func
 )
 
 
 # adpated from https://github.com/Dao-AILab/flash-attention/blob/v2.2.1/flash_attn/modules/mha.py
-def __torch_fixedlen_qkvpacked_attn(qkv, dropout, softmax_scale=None, causal=False, key_padding_mask=None):
+def _torch_fixedlen_qkvpacked_attn(qkv, dropout, softmax_scale=None, causal=False, key_padding_mask=None):
     batch_size, seqlen = qkv.shape[0], qkv.shape[1]
     q, k, v = qkv.unbind(dim=2)
 
@@ -90,7 +105,7 @@ def __torch_fixedlen_qkvpacked_attn(qkv, dropout, softmax_scale=None, causal=Fal
 
 
 # adpated from https://github.com/Dao-AILab/flash-attention/blob/v2.2.1/flash_attn/modules/mha.py
-def __torch_fixedlen_kvpacked_attn(q, kv, dropout, softmax_scale=None, causal=False, key_padding_mask=None):
+def _torch_fixedlen_kvpacked_attn(q, kv, dropout, softmax_scale=None, causal=False, key_padding_mask=None):
     batch_size, seqlen_q = q.shape[0], q.shape[1]
     seqlen_k = kv.shape[1]
 
@@ -121,7 +136,7 @@ def __torch_fixedlen_kvpacked_attn(q, kv, dropout, softmax_scale=None, causal=Fa
     return output
 
 
-def __torch_nyi_attn(*args, **kwargs):
+def _torch_nyi_attn(*args, **kwargs):
     assert False, "Not yet implemented"
 
 
@@ -161,9 +176,9 @@ class SelfAttention(nn.Module):
         causal = self.causal if causal is None else causal
 
         if gpc.config.model.get("use_flash_attn", False) and flash_attn_impl:
-            return __flash_fixedlen_qkvpacked_attn(qkv, self.dropout.p, softmax_scale, causal, return_attn_probs)
+            return _flash_fixedlen_qkvpacked_attn(qkv, self.dropout.p, softmax_scale, causal, return_attn_probs)
         else:
-            return __torch_fixedlen_qkvpacked_attn(qkv, self.dropout, softmax_scale, causal, key_padding_mask)
+            return _torch_fixedlen_qkvpacked_attn(qkv, self.dropout, softmax_scale, causal, key_padding_mask)
 
     @forward.register(conditions=(str(QKVPackType.KVPACKED), str(CuSeqlenType.WithOut)))
     def _(self, q, kv, softmax_scale=None, causal=False, return_attn_probs=False, key_padding_mask=None):
@@ -171,9 +186,9 @@ class SelfAttention(nn.Module):
         causal = self.causal if causal is None else causal
 
         if gpc.config.model.get("use_flash_attn", False) and flash_attn_impl:
-            return __flash_fixedlen_kvpacked_attn(q, kv, self.dropout.p, softmax_scale, causal, return_attn_probs)
+            return _flash_fixedlen_kvpacked_attn(q, kv, self.dropout.p, softmax_scale, causal, return_attn_probs)
         else:
-            return __torch_fixedlen_kvpacked_attn(q, kv, self.dropout, softmax_scale, causal, key_padding_mask)
+            return _torch_fixedlen_kvpacked_attn(q, kv, self.dropout, softmax_scale, causal, key_padding_mask)
 
     @forward.register(conditions=(str(QKVPackType.QKVSPLITED), str(CuSeqlenType.WithOut)))
     def _(self, q, k, v, softmax_scale=None, causal=False, return_attn_probs=False, key_padding_mask=None):
@@ -181,9 +196,9 @@ class SelfAttention(nn.Module):
         causal = self.causal if causal is None else causal
 
         if gpc.config.model.get("use_flash_attn", False) and flash_attn_impl:
-            return __flash_fixedlen_qkvsplited_attn(q, k, v, self.dropout.p, softmax_scale, causal, return_attn_probs)
+            return _flash_fixedlen_qkvsplited_attn(q, k, v, self.dropout.p, softmax_scale, causal, return_attn_probs)
         else:
-            return __torch_nyi_attn(q, k, v, self.dropout, softmax_scale, causal, key_padding_mask)
+            return _torch_nyi_attn(q, k, v, self.dropout, softmax_scale, causal, key_padding_mask)
 
     @forward.register(conditions=(str(QKVPackType.QKVPACKED), str(CuSeqlenType.With)))
     def _(
@@ -200,11 +215,11 @@ class SelfAttention(nn.Module):
         causal = self.causal if causal is None else causal
 
         if gpc.config.model.get("use_flash_attn", False) and flash_attn_impl:
-            return __flash_varlen_qkvpacked_attn(
+            return _flash_varlen_qkvpacked_attn(
                 qkv, cu_seqlens, max_seqlen, self.dropout.p, softmax_scale, causal, return_attn_probs
             )
         else:
-            return __torch_nyi_attn(qkv, cu_seqlens, max_seqlen, self.dropout, softmax_scale, causal, key_padding_mask)
+            return _torch_nyi_attn(qkv, cu_seqlens, max_seqlen, self.dropout, softmax_scale, causal, key_padding_mask)
 
     @forward.register(conditions=(str(QKVPackType.KVPACKED), str(CuSeqlenType.With)))
     def _(
@@ -224,7 +239,7 @@ class SelfAttention(nn.Module):
         causal = self.causal if causal is None else causal
 
         if gpc.config.model.get("use_flash_attn", False) and flash_attn_impl:
-            return __flash_varlen_kvpacked_attn(
+            return _flash_varlen_kvpacked_attn(
                 q,
                 kv,
                 cu_seqlens_q,
@@ -237,7 +252,7 @@ class SelfAttention(nn.Module):
                 return_attn_probs,
             )
         else:
-            return __torch_nyi_attn(
+            return _torch_nyi_attn(
                 q,
                 kv,
                 cu_seqlens_q,
@@ -269,7 +284,7 @@ class SelfAttention(nn.Module):
         causal = self.causal if causal is None else causal
 
         if gpc.config.model.get("use_flash_attn", False) and flash_attn_impl:
-            return __flash_varlen_qkvsplited_attn(
+            return _flash_varlen_qkvsplited_attn(
                 q,
                 k,
                 v,
@@ -283,7 +298,7 @@ class SelfAttention(nn.Module):
                 return_attn_probs,
             )
         else:
-            return __torch_nyi_attn(
+            return _torch_nyi_attn(
                 q,
                 k,
                 v,
@@ -335,9 +350,9 @@ class CrossAttention(nn.Module):
         causal = self.causal if causal is None else causal
 
         if gpc.config.model.get("use_flash_attn", False) and flash_attn_impl:
-            return __flash_fixedlen_kvpacked_attn(q, kv, self.dropout.p, softmax_scale, causal, return_attn_probs)
+            return _flash_fixedlen_kvpacked_attn(q, kv, self.dropout.p, softmax_scale, causal, return_attn_probs)
         else:
-            return __torch_fixedlen_kvpacked_attn(q, kv, self.dropout, softmax_scale, causal, key_padding_mask)
+            return _torch_fixedlen_kvpacked_attn(q, kv, self.dropout, softmax_scale, causal, key_padding_mask)
 
     @forward.register(conditions=(str(QKVPackType.QKVSPLITED), str(CuSeqlenType.WithOut)))
     def _(self, q, k, v, softmax_scale=None, causal=False, return_attn_probs=False, key_padding_mask=None):
@@ -345,9 +360,9 @@ class CrossAttention(nn.Module):
         causal = self.causal if causal is None else causal
 
         if gpc.config.model.get("use_flash_attn", False) and flash_attn_impl:
-            return __flash_fixedlen_qkvsplited_attn(q, k, v, self.dropout.p, softmax_scale, causal, return_attn_probs)
+            return _flash_fixedlen_qkvsplited_attn(q, k, v, self.dropout.p, softmax_scale, causal, return_attn_probs)
         else:
-            return __torch_nyi_attn(q, k, v, self.dropout, softmax_scale, causal, key_padding_mask)
+            return _torch_nyi_attn(q, k, v, self.dropout, softmax_scale, causal, key_padding_mask)
 
     @forward.register(conditions=(str(QKVPackType.KVPACKED), str(CuSeqlenType.With)))
     def _(
@@ -367,7 +382,7 @@ class CrossAttention(nn.Module):
         causal = self.causal if causal is None else causal
 
         if gpc.config.model.get("use_flash_attn", False) and flash_attn_impl:
-            return __flash_varlen_kvpacked_attn(
+            return _flash_varlen_kvpacked_attn(
                 q,
                 kv,
                 cu_seqlens_q,
@@ -380,7 +395,7 @@ class CrossAttention(nn.Module):
                 return_attn_probs,
             )
         else:
-            return __torch_nyi_attn(
+            return _torch_nyi_attn(
                 q,
                 kv,
                 cu_seqlens_q,
@@ -412,7 +427,7 @@ class CrossAttention(nn.Module):
         causal = self.causal if causal is None else causal
 
         if gpc.config.model.get("use_flash_attn", False) and flash_attn_impl:
-            return __flash_varlen_qkvsplited_attn(
+            return _flash_varlen_qkvsplited_attn(
                 q,
                 k,
                 v,
@@ -426,7 +441,7 @@ class CrossAttention(nn.Module):
                 return_attn_probs,
             )
         else:
-            return __torch_nyi_attn(
+            return _torch_nyi_attn(
                 q,
                 k,
                 v,

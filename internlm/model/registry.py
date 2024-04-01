@@ -1,13 +1,14 @@
 #!/usr/bin/env python
 # -*- encoding: utf-8 -*-
 
-from typing import Union, List
+from typing import Callable
 
-from torch import nn
-
-from internlm.core.context import ParallelMode
-from internlm.core.context import global_context as gpc
-from internlm.core.parallel.shard import pipeline_parallel_sharding_wrapper
+from internlm.model.modeling_internlm import (
+    PackedFlashInternLm1D as InternLMInitializer,
+)
+from internlm.model.modeling_internlm2 import PackedFlashLlama1D as InternLM2Initializer
+from internlm.model.modeling_llama import PackedFlashLlama1D as Llama2Initializer
+from internlm.model.modeling_moe import PackedFlashInternLm1D as InternLMMoEInitializer
 
 
 class Registry:
@@ -20,13 +21,13 @@ class Registry:
 
     def __init__(self, name: str):
         self._name = name
-        self._registry = dict()
+        self._registry = {}
 
     @property
     def name(self):
         return self._name
 
-    def register_module(self, module_name: str):
+    def register_module(self, module_name: str, func: Callable):
         """Registers a module represented in `module_class`.
 
         Args:
@@ -39,11 +40,7 @@ class Registry:
 
         assert module_name not in self._registry, f"{module_name} already registered in {self.name}"
 
-        def decorator_wrapper(original_func):
-            self._registry[module_name] = original_func
-            return original_func
-
-        return decorator_wrapper
+        self._registry[module_name] = func
 
     def get_module(self, module_name: str):
         """Retrieves a module with name `module_name` and returns the module if it has
@@ -76,16 +73,15 @@ class Registry:
         return found_flag
 
 
-# TODO: change to inner var
-MODEL_INITIALIZER = Registry("model_initializer")
+model_initializer = Registry("model_initializer")
 
 
-def create_model(model_type, *args, **kwargs) -> Union[nn.Module, List[nn.Module]]:
-    num_chunks = kwargs.pop("num_chunks", 1)
-    model_buidler = MODEL_INITIALIZER.get_module(module_name=model_type)
-
-    if not gpc.is_using_parallel_mode(ParallelMode.PIPELINE):
-        model_buidler(*args, **kwargs)
-
-    num_layers = kwargs.pop("num_layers")
-    return pipeline_parallel_sharding_wrapper(num_layers, num_chunks, model_buidler, *args, **kwargs)
+def register_model_initializer() -> None:
+    model_initializer.register_module("INTERNLM", InternLMInitializer)
+    model_initializer.register_module("INTERNLM2_PUBLIC", InternLM2Initializer)
+    model_initializer.register_module("LLAMA2", Llama2Initializer)
+    model_initializer.register_module("INTERNLM_MoE", InternLMMoEInitializer)
+    # FIXME: moe内部不应该用全局的model initializer，否则包依赖关系会非常混乱
+    # model_initializer.register_module("GShard", GShardMOEInitializer)
+    # model_initializer.register_module("MegaBlock-D", MegaBlockdMoEInitializer)
+    # model_initializer.register_module("MegaBlock", MegaBlockMoEInitializer)

@@ -1,16 +1,11 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import types
-
 from contextlib import contextmanager
-from typing import Any, Callable, Tuple
-from enum import Enum
+from enum import Enum, IntEnum
 from functools import update_wrapper
+from typing import Callable, Tuple
 
 import torch
-
-from internlm.utils.logger import get_logger
-
-logger = get_logger(__file__)
 
 
 @contextmanager
@@ -29,15 +24,24 @@ def read_base():
     yield
 
 
-class QKVPackType(Enum):
+class QKVPackType(IntEnum):
     QKVPACKED = 2
     KVPACKED = 3
     QKVSPLITED = 4
+
+    def __str__(self) -> str:
+        return str(self.value)
+
 
 class CuSeqlenType(Enum):
     With = True
     WithOut = False
 
+    def __str__(self) -> str:
+        return str(self.value)
+
+
+# 这个函数应该放在哪里比较好，他同时被 attention 和 distributed attention 依赖。
 def check_attention_argument(*args, **kwargs) -> str:
     # self, qkv, ...
     # self, q, kv, ....
@@ -50,14 +54,14 @@ def check_attention_argument(*args, **kwargs) -> str:
             return "qkv" in kwargs
         else:
             # qkv: [batch, seqlen, 3, n_head, headdim]
-            return args[1].shape == 5
+            return len(args[1].shape) == 4  # TODO: chager to 5 after merge
 
     def __kv_checker(num_args: int):
         if num_args < 3:
             return "kv" in kwargs
         else:
             # kv: [batch, seqlen, 3, n_head, headdim]
-            return args[2].shape == 5
+            return len(args[2].shape) == 4  # TODO: chager to 5 after merge
 
     def __cu_seqlens_checker(num_args: int, check_idx: int):
         if num_args < (check_idx + 1):
@@ -67,38 +71,43 @@ def check_attention_argument(*args, **kwargs) -> str:
 
     if __qkv_checker(len(args)):
         # qkv packed, and we should check cu_seqlens with index 2
-        qkv_pack_type = QKVPackType.QKVPACKED
+        qkv_pack_type = int(QKVPackType.QKVPACKED)
     elif __kv_checker(len(args)):
         # kv packed, and we should check cu_seqlens with index 3
-        qkv_pack_type = QKVPackType.KVPACKED
+        qkv_pack_type = int(QKVPackType.KVPACKED)
     else:
         # qkv splited, and we should check cu_seqlens with index 4
-        qkv_pack_type = QKVPackType.QKVSPLITED
+        qkv_pack_type = int(QKVPackType.QKVSPLITED)
 
-    with_cu_seqlens = __cu_seqlens_checker(len(args), int(qkv_pack_type))
+    with_cu_seqlens = __cu_seqlens_checker(len(args), qkv_pack_type)
 
     return str(qkv_pack_type), str(with_cu_seqlens)
 
 
-def _params_dispatch_with_condition(func: Callable, condition: Callable):
+def params_dispatch_with_condition(condition: Callable, func: Callable = None):
+
+    if func is None:
+        # create a params dispatch wrapper
+        return lambda f: params_dispatch_with_condition(condition, f)
 
     registry = {}
-    funcname = getattr(func, "__name__", "singledispatch function")
+    funcname = getattr(func, "__name__", "params_dispatch_with_condition function")
 
     def dispatch(_type: str) -> Callable:
-        try:
-            impl = registry[_type]
-        except KeyError:
-            logger.error("unknown dispatch type: %s", _type)
+        return registry[_type]
 
-        return impl
+    def register(conditions: Tuple[str], func: Callable = None) -> None:
+        if func is None:
+            # create a register wrapper
+            return lambda f: register(conditions, f)
 
-    def register(conditions: Tuple[str], func: Callable) -> None:
         _type = "-".join(conditions)
 
         assert _type not in registry, f"Repeatedly register dispatch functions for pattern {_type}"
 
         registry[_type] = func
+
+        return func
 
     def wrapper(*args, **kwargs):
         if not args:
@@ -114,10 +123,3 @@ def _params_dispatch_with_condition(func: Callable, condition: Callable):
     wrapper.registry = types.MappingProxyType(registry)
     update_wrapper(wrapper, func)
     return wrapper
-
-def params_dispatch_with_condition(condition: Callable):
-
-    def decorator_wrapper(func: Callable):
-        return _params_dispatch_with_condition(func, condition)
-
-    return decorator_wrapper

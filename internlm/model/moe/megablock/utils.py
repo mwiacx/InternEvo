@@ -2,7 +2,7 @@ import sys
 
 import torch
 
-from internlm.model.utils import Silu
+from internlm.model.modules.utils import Silu
 
 try:
     import stk

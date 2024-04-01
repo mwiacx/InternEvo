@@ -3,6 +3,7 @@
 
 import torch
 import torch.nn.functional as F
+from einops import rearrange
 
 from internlm.utils.logger import get_logger
 
@@ -51,12 +52,8 @@ def update_kv_cache(kv, inference_params, layer_idx):
     batch_end = batch_start + kv.shape[0]
     sequence_start = inference_params.sequence_len_offset
     sequence_end = sequence_start + kv.shape[1]
-    assert batch_end <= (
-        kv_cache.shape[0] if kv_cache is not None else v_cache.shape[0]
-    )
-    assert sequence_end <= (
-        kv_cache.shape[1] if kv_cache is not None else v_cache.shape[2]
-    )
+    assert batch_end <= (kv_cache.shape[0] if kv_cache is not None else v_cache.shape[0])
+    assert sequence_end <= (kv_cache.shape[1] if kv_cache is not None else v_cache.shape[2])
     # Copy key and values.
     if not inference_params.fused_ft_kernel:
         assert kv_cache is not None
@@ -81,7 +78,5 @@ def update_kv_cache(kv, inference_params, layer_idx):
             k_cache[batch_start:batch_end, :, :, :sequence_end, :] = rearrange(
                 kv[:, :, 0], "b s h (d packsize) -> b h d s packsize", packsize=packsize
             )
-            v_cache[batch_start:batch_end, :, :sequence_end, :] = rearrange(
-                kv[:, :, 1], "b s h d -> b h s d"
-            )
+            v_cache[batch_start:batch_end, :, :sequence_end, :] = rearrange(kv[:, :, 1], "b s h d -> b h s d")
         return kv

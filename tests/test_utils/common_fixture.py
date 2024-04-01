@@ -91,7 +91,7 @@ def init_naive_model():
     import internlm.model.modeling_internlm  # noqa # pylint: disable=unused-import
     import internlm.model.modeling_moe  # noqa # pylint: disable=unused-import
     from internlm.core.naive_amp import NaiveAMPModel
-    from internlm.core.model import create_model
+    from internlm.model.builder import create_model
 
     model = create_model(module_name=gpc.config.model_type, **(init_config.model))
     model = NaiveAMPModel(

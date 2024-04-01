@@ -1,9 +1,9 @@
 from .pipeline import (
     get_scheduler_hooks,
-    initialize_parallel_communicator,
     initialize_llm_profile,
     initialize_model,
     initialize_optimizer,
+    initialize_parallel_communicator,
     load_new_batch,
     record_current_batch_training_metrics,
     set_fp32_attr_for_model,

@@ -9,61 +9,76 @@ import torch
 from torch import nn
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp.fully_sharded_data_parallel import (
-    BackwardPrefetch, ShardingStrategy)
+    BackwardPrefetch,
+    ShardingStrategy,
+)
 from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
 from torch.utils.data import DataLoader
 
-from internlm.core.context import (IS_REPLICA_ZERO_PARALLEL,
-                                   IS_TENSOR_DATA_PARALLEL,
-                                   IS_TENSOR_EXPERT_DATA_PARALLEL,
-                                   IS_TENSOR_ZERO_PARALLEL,
-                                   IS_WEIGHT_ZERO_PARALLEL, ParallelMode)
+from internlm.core.context import (
+    IS_REPLICA_ZERO_PARALLEL,
+    IS_TENSOR_DATA_PARALLEL,
+    IS_TENSOR_EXPERT_DATA_PARALLEL,
+    IS_TENSOR_ZERO_PARALLEL,
+    IS_WEIGHT_ZERO_PARALLEL,
+    ParallelMode,
+)
 from internlm.core.context import global_context as gpc
 from internlm.core.context.random import set_mode
 from internlm.core.naive_amp import NaiveAMPModel, set_fp32_attr_to_module
-from internlm.core.parallel.comm.isp import (ISPCommModelConfig,
-                                             ISPCommunicator,
-                                             ISPCommunicatorSchedulerHook)
-from internlm.core.parallel.comm.tensor import (HeadTensorParallelCommunicator,
-                                                LinearRole,
-                                                SequenceParallelCommunicator,
-                                                TensorParallelCommunicator)
+from internlm.core.parallel.comm.isp import (
+    ISPCommModelConfig,
+    ISPCommunicator,
+    ISPCommunicatorSchedulerHook,
+)
+from internlm.core.parallel.comm.tensor import (
+    HeadSequenceParallelCommunicator,
+    HeadTensorParallelCommunicator,
+    LinearRole,
+    SequenceParallelCommunicator,
+    TensorParallelCommunicator,
+)
 from internlm.core.parallel.comm.zero import ParamAsyncBcastHandler
 from internlm.core.trainer import TrainState
 from internlm.data.utils import unpack_data
+from internlm.model.builder import create_model
 from internlm.model.metrics import SchedulerMetricHook
 from internlm.model.modules.embedding import Embedding1D
-from internlm.model.modules.linear import (ColumnParallelLinear,
-                                           RewardModelLinear,
-                                           RowParallelLinear,
-                                           ScaleColumnParallelLinear)
+from internlm.model.modules.linear import (
+    ColumnParallelLinear,
+    RewardModelLinear,
+    RowParallelLinear,
+    ScaleColumnParallelLinear,
+)
 from internlm.model.modules.mha import QKVPackedMHA
 from internlm.model.modules.mlp import FeedForward
 from internlm.model.modules.utils import is_moe_param
-from internlm.model.moe import MoE
-from internlm.model.moe.megablock.mlp import (MegaBlockFeedForward,
-                                              MegaBlockGroupedFeedForward)
+from internlm.model.moe.megablock.mlp import (
+    MegaBlockFeedForward,
+    MegaBlockGroupedFeedForward,
+)
+from internlm.model.moe.moe import MoE
 from internlm.model.ops.norm import RMSNorm
+from internlm.model.registry import register_model_initializer
 from internlm.monitor import send_heartbeat, set_env_var
 from internlm.monitor.monitor import monitor_manager as mm
 from internlm.solver.optimizer import FSDPadaptOptimizer, HybridZeroOptimizer
 from internlm.solver.schedulers.beta2_scheduler import Beta2Scheduler
-from internlm.solver.schedulers.lr_scheduler import \
-    FineTuneCosineAnnealingWarmupLR
+from internlm.solver.schedulers.lr_scheduler import FineTuneCosineAnnealingWarmupLR
 from internlm.train.utils import create_param_groups
-from internlm.utils.common import (DummyProfile, SchedulerHook,
-                                   get_current_device)
+from internlm.utils.common import DummyProfile, SchedulerHook, get_current_device
 from internlm.utils.logger import get_logger
 from internlm.utils.megatron_timers import megatron_timer as timer
-from internlm.utils.parallel import (is_replica_zero_parallel_parameter,
-                                     is_tensor_data_parallel_parameter,
-                                     is_tensor_expert_data_parallel_parameter,
-                                     is_tensor_zero_parallel_parameter,
-                                     is_using_isp,
-                                     is_weight_zero_parallel_parameter,
-                                     sync_model_param,
-                                     sync_model_replica_param_group)
-from internlm.core.model import create_model
+from internlm.utils.parallel import (
+    is_replica_zero_parallel_parameter,
+    is_tensor_data_parallel_parameter,
+    is_tensor_expert_data_parallel_parameter,
+    is_tensor_zero_parallel_parameter,
+    is_using_isp,
+    is_weight_zero_parallel_parameter,
+    sync_model_param,
+    sync_model_replica_param_group,
+)
 from internlm.utils.timeout import llm_timeout
 
 logger = get_logger(__file__)
@@ -150,6 +165,8 @@ def initialize_model(pre_process_func: Optional[Callable] = None, post_process_f
     """
     if pre_process_func:
         pre_process_output = pre_process_func()
+
+    register_model_initializer()
 
     model = create_model(model_type=gpc.config.model_type, **(gpc.config.model))
 
@@ -267,6 +284,8 @@ def initialize_parallel_communicator(model: Union[nn.Module, nn.ModuleList]):
         RowParallelLinear.register_communicator(None)
 
     # register communictor for mtp/msp/fsp linear.
+    _retain_out_sharded = gpc.config.model.get("parallel_output", True)
+    # tensor parallel
     if gpc.config.parallel.tensor.mode == "mtp":
         ColumnParallelLinear.register_communicator(
             TensorParallelCommunicator(process_group=gpc.get_group(ParallelMode.TENSOR), role=LinearRole.COLUMN)
@@ -274,6 +293,8 @@ def initialize_parallel_communicator(model: Union[nn.Module, nn.ModuleList]):
         RowParallelLinear.register_communicator(
             TensorParallelCommunicator(process_group=gpc.get_group(ParallelMode.TENSOR), role=LinearRole.ROW)
         )
+        _head_comminucator = HeadTensorParallelCommunicator(ParallelMode.TENSOR, _retain_out_sharded)
+    # sequence parallel
     if gpc.config.parallel.tensor.mode in ("msp", "fsp"):
         save_total_input_as_activation = gpc.config.parallel.tensor.mode == "msp"
 
@@ -291,10 +312,11 @@ def initialize_parallel_communicator(model: Union[nn.Module, nn.ModuleList]):
                 save_total_input_as_activation=save_total_input_as_activation,
             )
         )
+        _head_comminucator = HeadSequenceParallelCommunicator(
+            ParallelMode.TENSOR, _retain_out_sharded, save_total_input_as_activation
+        )
 
-    # register communicator for isp column parallel linear.
-    _retain_out_sharded = gpc.config.model.get("parallel_output", True)
-    _head_comminucator = HeadTensorParallelCommunicator(ParallelMode.TENSOR, _retain_out_sharded)
+    # register communictor for head layer.
     ScaleColumnParallelLinear.register_communicator(_head_comminucator)
     RewardModelLinear.register_communicator(_head_comminucator)
 

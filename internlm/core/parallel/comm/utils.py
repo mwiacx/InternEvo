@@ -32,6 +32,7 @@ DUMMY_HANDLE_CONST = DummyAsyncCommHandle()
 A shared dummy async communication handeles used to maintain consistency in code writing.
 """
 
+
 # Raw operation, does not support autograd, but does support async
 def all_reduce_raw(input_: Tensor, process_group: ProcessGroup, async_op: bool = False):
     input_ = input_.contiguous()

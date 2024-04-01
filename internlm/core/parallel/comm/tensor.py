@@ -123,34 +123,6 @@ class TensorParallelCommunicator(TPCommunicator):
         return all_reduce_raw(output, process_group=self._process_group, async_op=async_op)
 
 
-class HeadTensorParallelCommunicator(TensorParallelCommunicator):
-    def __init__(self, parallel_mode: ParallelMode, retain_out_sharded: bool = True) -> None:
-        super().__init__(process_group=gpc.get_group(parallel_mode), role=LinearRole.COLUMN)
-
-        self._parallel_mode = parallel_mode
-        self._retain_out_sharded = retain_out_sharded
-
-    def grad_output_hook(
-        self, grad_output: torch.Tensor, async_op: bool = False
-    ) -> Tuple[torch.Tensor, AsyncCommHandle]:
-        """
-        split grad_output if retain_out_sharded is False.
-        """
-        if self._retain_out_sharded or dist.get_world_size(self._process_group) <= 1:
-            return grad_output, DUMMY_HANDLE_CONST
-
-        return _split(grad_output, parallel_mode=self._parallel_mode, dim=-1)
-
-    def output_hook(self, output: torch.Tensor, async_op: bool = False) -> Tuple[torch.Tensor, AsyncCommHandle]:
-        """
-        all gather output for head layer if retain_out_sharded is False.
-        """
-        if self._retain_out_sharded or dist.get_world_size(self._process_group) <= 1:
-            return output, DUMMY_HANDLE_CONST
-
-        return _gather(output, parallel_mode=self._parallel_mode, dim=-1)
-
-
 class SequenceParallelCommunicator(TPCommunicator):
     def __init__(
         self, process_group: dist.ProcessGroup, role: LinearRole, save_total_input_as_activation: bool = False
@@ -215,3 +187,67 @@ class SequenceParallelCommunicator(TPCommunicator):
             return output, DUMMY_HANDLE_CONST
 
         return reduce_scatter_raw(output, process_group=self._process_group, async_op=async_op)
+
+
+class HeadTensorParallelCommunicator(TensorParallelCommunicator):
+    def __init__(self, parallel_mode: ParallelMode, retain_out_sharded: bool = True) -> None:
+        super().__init__(process_group=gpc.get_group(parallel_mode), role=LinearRole.COLUMN)
+
+        self._parallel_mode = parallel_mode
+        self._retain_out_sharded = retain_out_sharded
+
+    def grad_output_hook(
+        self, grad_output: torch.Tensor, async_op: bool = False
+    ) -> Tuple[torch.Tensor, AsyncCommHandle]:
+        """
+        split grad_output if retain_out_sharded is False.
+        """
+        if self._retain_out_sharded or dist.get_world_size(self._process_group) <= 1:
+            return grad_output, DUMMY_HANDLE_CONST
+
+        return _split(grad_output, parallel_mode=self._parallel_mode, dim=-1)
+
+    def output_hook(self, output: torch.Tensor, async_op: bool = False) -> Tuple[torch.Tensor, AsyncCommHandle]:
+        """
+        all gather output for head layer if retain_out_sharded is False.
+        """
+        if self._retain_out_sharded or dist.get_world_size(self._process_group) <= 1:
+            return output, DUMMY_HANDLE_CONST
+
+        return _gather(output, parallel_mode=self._parallel_mode, dim=-1)
+
+
+class HeadSequenceParallelCommunicator(SequenceParallelCommunicator):
+    def __init__(
+        self, parallel_mode: ParallelMode, retain_out_sharded: bool = True, save_total_input_as_activation: bool = False
+    ) -> None:
+        super().__init__(
+            process_group=gpc.get_group(parallel_mode),
+            role=LinearRole.COLUMN,
+            save_total_input_as_activation=save_total_input_as_activation,
+        )
+
+        self._parallel_mode = parallel_mode
+        self._retain_out_sharded = retain_out_sharded
+
+    # rewrite grad_output communication hook
+    def grad_output_hook(
+        self, grad_output: torch.Tensor, async_op: bool = False
+    ) -> Tuple[torch.Tensor, AsyncCommHandle]:
+        """
+        split grad_output if retain_out_sharded is False.
+        """
+        if self._retain_out_sharded or dist.get_world_size(self._process_group) <= 1:
+            return grad_output, DUMMY_HANDLE_CONST
+
+        return _split(grad_output, parallel_mode=self._parallel_mode, dim=-1)
+
+    # rewrite ouput communication hook
+    def output_hook(self, output: torch.Tensor, async_op: bool = False) -> Tuple[torch.Tensor, AsyncCommHandle]:
+        """
+        all gather output for head layer if retain_out_sharded is False.
+        """
+        if self._retain_out_sharded or dist.get_world_size(self._process_group) <= 1:
+            return output, DUMMY_HANDLE_CONST
+
+        return _gather(output, parallel_mode=self._parallel_mode, dim=-1)

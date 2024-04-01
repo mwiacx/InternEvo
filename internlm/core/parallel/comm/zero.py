@@ -5,14 +5,15 @@ communication for zero parallel
 from collections import OrderedDict
 from typing import Dict, List, Union
 
-from flash_attn.modules.embedding import ParallelGPT2Embeddings
+from torch import distributed as dist
 from torch import nn
 
 from internlm.core.context import ParallelMode
+from internlm.core.context import global_context as gpc
 from internlm.core.naive_amp import NaiveAMPModel
 from internlm.core.parallel.comm.isp import ISPCommunicator
 from internlm.model.modules.embedding import Embedding1D
-from internlm.model.modules.mlp import ScaleColumnParallelLinear
+from internlm.model.modules.linear import ScaleColumnParallelLinear
 
 
 class ParamAsyncBcastHandler:
@@ -100,9 +101,8 @@ class ParamAsyncBcastHandler:
             # NOTE: Although the layernorm layer does not have explicit processing,
             # both ISPCommunicator and ParamAsyncBcastHandler handle transformer blocks as granularity,
             # so everything is fine.
-            if isp_communicator is None or isinstance(
-                block, (Embedding1D, ParallelGPT2Embeddings, ScaleColumnParallelLinear)
-            ):
+            # TODO: 用另外的方式判断emb 和 head 层
+            if isp_communicator is None or isinstance(block, (Embedding1D, ScaleColumnParallelLinear)):
                 block.register_forward_pre_hook(_pre_forward_hook)
         if isp_communicator:
             isp_communicator.register_prerequisite_for_forward_prefetch_hooks(_pre_forward_hook)

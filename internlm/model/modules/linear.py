@@ -1,8 +1,9 @@
 """
 Linear Modules
 """
+from __future__ import annotations
 
-from typing import Optional, Union
+from typing import TYPE_CHECKING, Optional, Union
 
 import torch
 import torch.distributed as dist
@@ -10,7 +11,6 @@ from torch import nn
 from torch.cuda.amp import custom_bwd, custom_fwd
 
 from internlm.core.context import global_context as gpc
-from internlm.core.parallel.comm.isp import ISPCommunicator
 from internlm.core.parallel.comm.tensor import TPCommunicator
 from internlm.core.parallel.shard import (
     get_head_parallel_mode,
@@ -19,6 +19,9 @@ from internlm.core.parallel.shard import (
 )
 from internlm.model.ops.linear import linear_backward_op, linear_forward_op
 from internlm.utils.logger import get_logger
+
+if TYPE_CHECKING:
+    from internlm.core.parallel.comm.isp import ISPCommunicator
 
 logger = get_logger(__file__)
 
@@ -276,7 +279,6 @@ def fused_dense_func(
             bias,
             communicator,
             return_residual,
-            save_total_x=True,
         )
     else:  # fsp
         return FusedDenseFunc.apply(
@@ -285,7 +287,6 @@ def fused_dense_func(
             bias,
             communicator,
             return_residual,
-            save_total_x=False,
         )
 
 

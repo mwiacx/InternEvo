@@ -37,7 +37,7 @@ class FeedForward(nn.Module):
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None,
         multiple_of: int = 256,
-        activation_type: str = "swiglu"
+        activation_type: str = "swiglu",
     ):
         super().__init__()
 

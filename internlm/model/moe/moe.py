@@ -4,7 +4,6 @@ import internlm.moe  # noqa # pylint: disable=W0611
 from internlm.core.context import global_context as gpc
 from internlm.model.modules.mlp import new_fead_forward
 from internlm.utils.logger import get_logger
-from internlm.core.model import create_model
 
 # global llm logger
 logger = get_logger(__file__)
@@ -47,16 +46,17 @@ class MoE(torch.nn.Module):
         if not hasattr(gpc.config, "moe"):
             gpc.config.moe = dict()
 
-        self.moe_layer = create_model(
-            model_type=gpc.config.model.moe_type,
-            hidden_size=hidden_size,
-            num_experts=num_experts,
-            ep_group=ep_group,
-            ep_size=ep_size,
-            device=device,
-            dtype=dtype,
-            **(gpc.config.moe)
-        )
+        # FIXME: moe内部不应该用全局的model initializer，否则包依赖关系会非常混乱
+        # self.moe_layer = create_model(
+        #     model_type=gpc.config.model.moe_type,
+        #     hidden_size=hidden_size,
+        #     num_experts=num_experts,
+        #     ep_group=ep_group,
+        #     ep_size=ep_size,
+        #     device=device,
+        #     dtype=dtype,
+        #     **(gpc.config.moe)
+        # )
 
         # residual network, see https://arxiv.org/pdf/2201.05596.pdf, seems useful for convergence
         self.use_residual = gpc.config.model.moe_use_residual

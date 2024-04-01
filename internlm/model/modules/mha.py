@@ -1,19 +1,14 @@
 #!/usr/bin/env python
 # -*- encoding: utf-8 -*-
 
-import math
-import warnings
 from typing import Optional
 
 import torch
-import torch.nn.functional as F
 from einops import rearrange
 from torch import nn
 
-from internlm.core.context import global_context as gpc
 from internlm.model.modules.embedding import new_rotary_embedding
 from internlm.model.modules.linear import new_linear
-from internlm.model.modules.utils import update_kv_cache
 from internlm.model.ops.attention import CrossAttention, SelfAttention
 
 # MHA, qkvpacked, inference
@@ -562,9 +557,7 @@ class QKVPackedMHA(nn.Module):
         self.max_position_embeddings = max_position_embeddings
         factory_kwargs = {"device": device, "dtype": dtype}
 
-        assert (
-            self.embed_dim % num_heads == 0
-        ), "self.kdim must be divisible by num_heads"
+        assert self.embed_dim % num_heads == 0, "self.kdim must be divisible by num_heads"
 
         if self.rotary_emb_dim > 0:
             self.rotary_emb = new_rotary_embedding(
@@ -578,43 +571,38 @@ class QKVPackedMHA(nn.Module):
             )
 
         # bias=True is according to https://spaces.ac.cn/archives/9577
-        self.Wqkv = new_linear(
-            "Wqkv", embed_dim, 3 * embed_dim, bias=True, **factory_kwargs
-        )
+        self.Wqkv = new_linear("Wqkv", embed_dim, 3 * embed_dim, bias=True, **factory_kwargs)
 
-        self.inner_attn = SelfAttention(
-            causal=causal, softmax_scale=softmax_scale, attention_dropout=dropout
-        )
-        self.inner_cross_attn = CrossAttention(
-            causal=causal, softmax_scale=softmax_scale, attention_dropout=dropout
-        )
+        self.inner_attn = SelfAttention(causal=causal, softmax_scale=softmax_scale, attention_dropout=dropout)
+        self.inner_cross_attn = CrossAttention(causal=causal, softmax_scale=softmax_scale, attention_dropout=dropout)
 
         # output projection always have the bias (for now)
-        self.out_proj = new_linear(
-            "out_proj", embed_dim, embed_dim, bias=True, **factory_kwargs
-        )
+        self.out_proj = new_linear("out_proj", embed_dim, embed_dim, bias=True, **factory_kwargs)
 
     def forward(self, x, seqlen=None, inference_params=None, **kwargs):
         if inference_params is not None:
             return self._inference(x=x, inference_params=inference_params, **kwargs)
         else:
-            return self._training(
-                x=x, seqlen=seqlen, inference_params=inference_params, **kwargs
-            )
+            return self._training(x=x, seqlen=seqlen, inference_params=inference_params, **kwargs)
 
     def _inference(self, x, inference_params, **kwargs):
         assert False, "NYI"
 
     def _training(self, x, **kwargs):  # pylint: disable=W0613
+        # TODO: check it.
+        _seqlen = kwargs.pop("seqlen", None)
+        assert _seqlen is None, "seqlen is not None"
+        _inference_params = kwargs.pop("inference_params", None)
+        assert _inference_params is None, "inference_params is not None"
+
         qkv = self.Wqkv(x)
-        qkv = rearrange(
-            qkv, "... (three h d) -> ... three h d", three=3, d=self.head_dim
-        )
+        qkv = rearrange(qkv, "... (three h d) -> ... three h d", three=3, d=self.head_dim)
 
         q = qkv[..., 0, :, :].squeeze(2)
         k = qkv[..., 1, :, :].squeeze(2)
 
         indexes = kwargs.pop("indexes", 0)
+        indexes = 0 if indexes is None else indexes
         self.rotary_emb(q, offsets=indexes, cache_type="query", in_place=True)
         self.rotary_emb(k, offsets=indexes, cache_type="key", in_place=True)
         # if gpc.config.model.dtype is torch.float32 and gpc.config.model.use_flash_attn:
@@ -623,7 +611,7 @@ class QKVPackedMHA(nn.Module):
         #             qkv = qkv.to(torch.bfloat16)
         #         context = self.inner_attn(qkv).to(x.dtype)
         # else:
-        context = self.inner_attn(qkv)
+        context = self.inner_attn(qkv, **kwargs)
 
         # else:
         #     # TODO
@@ -707,9 +695,7 @@ class QKVSplitedGQA(nn.Module):
         self.rot_embed_HF_impl = rot_embed_HF_impl
         factory_kwargs = {"device": device, "dtype": dtype}
 
-        assert (
-            self.embed_dim % num_heads == 0
-        ), "embedding dim must be divisible by num_heads"
+        assert self.embed_dim % num_heads == 0, "embedding dim must be divisible by num_heads"
 
         if self.rotary_emb_dim > 0:
             self.rotary_emb = new_rotary_embedding(
@@ -731,12 +717,8 @@ class QKVSplitedGQA(nn.Module):
 
         # inner_attn_cls = FlashSelfAttention if use_flash_attn else SelfAttention
         # inner_cross_attn_cls = FlashCrossAttention if use_flash_attn else CrossAttention
-        self.inner_attn = SelfAttention(
-            causal=causal, softmax_scale=softmax_scale, attention_dropout=dropout
-        )
-        self.inner_cross_attn = CrossAttention(
-            causal=causal, softmax_scale=softmax_scale, attention_dropout=dropout
-        )
+        self.inner_attn = SelfAttention(causal=causal, softmax_scale=softmax_scale, attention_dropout=dropout)
+        self.inner_cross_attn = CrossAttention(causal=causal, softmax_scale=softmax_scale, attention_dropout=dropout)
 
         # self.inner_cross_attn_causal = causal
         # self.inner_cross_attn_softmax_scale = softmax_scale
@@ -772,6 +754,12 @@ class QKVSplitedGQA(nn.Module):
                 split x during sequence parallel, we split the batch * seqlen dimension
                 (in case batch is small).
         """
+        # TODO: check it.
+        _seqlen = kwargs.pop("seqlen", None)
+        assert _seqlen is None, "seqlen is not None"
+        _inference_params = kwargs.pop("inference_params", None)
+        assert _inference_params is None, "inference_params is not None"
+
         q, k, v = self.wq(x), self.wk(x), self.wv(x)
 
         q = rearrange(q, "... (h d) -> ... h d", d=self.head_dim)
@@ -780,6 +768,7 @@ class QKVSplitedGQA(nn.Module):
 
         if self.rotary_emb_dim > 0:
             indexes = kwargs.pop("indexes", 0)
+            indexes = 0 if indexes is None else indexes
 
             if not self.rot_embed_HF_impl:
                 q = torch.cat([q[..., ::2], q[..., 1::2]], dim=-1)
@@ -788,9 +777,7 @@ class QKVSplitedGQA(nn.Module):
             q = self.rotary_emb(q, offsets=indexes, cache_type="query")
             k = self.rotary_emb(k, offsets=indexes, cache_type="key")
 
-        kv = torch.concat(
-            [k.unsqueeze(2), v.unsqueeze(2)], dim=2
-        )  # data-pack data-unpack统一
+        kv = torch.concat([k.unsqueeze(2), v.unsqueeze(2)], dim=2)  # data-pack data-unpack统一
 
         context = self.inner_attn(q, kv, **kwargs)
         context = rearrange(context, "b s h d -> b s (h d)")
@@ -869,9 +856,7 @@ class QKVPackedGQA(nn.Module):
         self.rot_embed_HF_impl = rot_embed_HF_impl
         factory_kwargs = {"device": device, "dtype": dtype}
 
-        assert (
-            self.embed_dim % num_heads == 0
-        ), "embedding dim must be divisible by num_heads"
+        assert self.embed_dim % num_heads == 0, "embedding dim must be divisible by num_heads"
 
         if self.rotary_emb_dim > 0:
             self.rotary_emb = new_rotary_embedding(
@@ -884,16 +869,10 @@ class QKVPackedGQA(nn.Module):
                 rotary_type="dynamic_ntk" if self.use_dynamic_ntk_rope else "native",
             )
 
-        self.wqkv = new_linear(
-            "wqkv", embed_dim, embed_dim + 2 * self.kv_dim, bias, **factory_kwargs
-        )
+        self.wqkv = new_linear("wqkv", embed_dim, embed_dim + 2 * self.kv_dim, bias, **factory_kwargs)
 
-        self.inner_attn = SelfAttention(
-            causal=causal, softmax_scale=softmax_scale, attention_dropout=dropout
-        )
-        self.inner_cross_attn = CrossAttention(
-            causal=causal, softmax_scale=softmax_scale, attention_dropout=dropout
-        )
+        self.inner_attn = SelfAttention(causal=causal, softmax_scale=softmax_scale, attention_dropout=dropout)
+        self.inner_cross_attn = CrossAttention(causal=causal, softmax_scale=softmax_scale, attention_dropout=dropout)
 
         self.wo = new_linear("wo", embed_dim, embed_dim, bias, **factory_kwargs)
 
@@ -924,11 +903,15 @@ class QKVPackedGQA(nn.Module):
                 split x during sequence parallel, we split the batch * seqlen dimension
                 (in case batch is small).
         """
+        # TODO: check it.
+        _seqlen = kwargs.pop("seqlen", None)
+        assert _seqlen is None, "seqlen is not None"
+        _inference_params = kwargs.pop("inference_params", None)
+        assert _inference_params is None, "inference_params is not None"
+
         qkv = self.wqkv(x)
 
-        qkv = rearrange(
-            qkv, "b s (h gs d) -> b s h gs d", gs=self.q_per_kv + 2, d=self.head_dim
-        )
+        qkv = rearrange(qkv, "b s (h gs d) -> b s h gs d", gs=self.q_per_kv + 2, d=self.head_dim)
 
         q, k, v = (qkv[..., : self.q_per_kv, :], qkv[..., -2, :], qkv[..., -1, :])
 
@@ -936,6 +919,7 @@ class QKVPackedGQA(nn.Module):
 
         if self.rotary_emb_dim > 0:
             indexes = kwargs.pop("indexes", 0)
+            indexes = 0 if indexes is None else indexes
 
             if not self.rot_embed_HF_impl:
                 q = torch.cat([q[..., ::2], q[..., 1::2]], dim=-1)

@@ -11,8 +11,7 @@ from internlm.utils.logger import get_logger
 logger = get_logger(__file__)
 
 try:
-    from apex.normalization.fused_layer_norm import \
-        mixed_dtype_fused_rms_norm_affine
+    from apex.normalization.fused_layer_norm import mixed_dtype_fused_rms_norm_affine
 
     apex_rmsnorm_impl = True
 except (ModuleNotFoundError, ImportError):

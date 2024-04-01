@@ -7,21 +7,20 @@ from torch import nn
 from internlm.core.context import ParallelMode
 from internlm.core.context.parallel_context import global_context as gpc
 from internlm.core.naive_amp import set_output_attr_to_module
-from internlm.initialize.initialize_tensor import (normal_,
-                                                   scaled_init_method_normal,
-                                                   scaled_init_method_uniform,
-                                                   uniform_)
+from internlm.core.parallel.comm.utils import split_forward_gather_backward
+from internlm.initialize.initialize_tensor import (
+    normal_,
+    scaled_init_method_normal,
+    scaled_init_method_uniform,
+    uniform_,
+)
 from internlm.model.modules.embedding import Embedding1D
 from internlm.model.modules.linear import new_linear
 from internlm.model.modules.mha import QKVSplitedGQA
 from internlm.model.modules.mlp import new_fead_forward
 from internlm.model.modules.norm import new_layer_norm
-from internlm.model.modules.utils import split_forward_gather_backward
 from internlm.solver.activation_checkpoint import activation_checkpoint
 from internlm.utils.logger import get_logger
-from internlm.core.model import MODEL_INITIALIZER
-
-MODEL_TYPE = "LLAMA2"
 
 logger = get_logger(__file__)
 
@@ -322,12 +321,12 @@ class PackedFlashLlama1D(nn.Module):
 
     def __init__(
         self,
-        num_layers: int = 12,
-        hidden_size: int = 768,
-        num_attention_heads: int = 12,
-        num_kv_attention_heads: int = 12,
+        num_layers: int = 48,
+        hidden_size: int = 2048,
+        num_attention_heads: int = 32,
+        num_kv_attention_heads: int = 32,
         vocab_size: int = 50304,
-        mlp_ratio: int = 4,
+        mlp_ratio: float = 4.0,
         attn_drop_rate: float = 0.0,
         drop_rate: float = 0.0,
         dtype: torch.dtype = torch.float,
@@ -350,7 +349,7 @@ class PackedFlashLlama1D(nn.Module):
         dropout_selective_checkpoint: bool = True,
         use_scaled_init: bool = True,
         use_swiglu: bool = True,
-        use_flash_attn: bool = True,
+        # use_flash_attn: bool = True,
         embedding_init_std: float = 0.02,
         attn_wqkv_init_std: float = 0.02,
         attn_other_init_std: float = 0.02,
@@ -362,7 +361,7 @@ class PackedFlashLlama1D(nn.Module):
     ):
         super().__init__()
 
-        self.use_flash_attn = use_flash_attn
+        # self.use_flash_attn = use_flash_attn
         if checkpoint_fraction <= 0:
             checkpoint = False
         if not checkpoint:
@@ -497,128 +496,6 @@ class PackedFlashLlama1D(nn.Module):
             hidden_states = self.norm(hidden_states.float())
 
         if hasattr(self, "output"):
-            # Evaluation
-            # TODO: 统一并去掉维度
-            if gpc.is_evaluating is True:
-                hidden_states = self.output(hidden_states, gather_dim=1, tp_mode=self.tp_mode)
-            else:  # Training
-                hidden_states = self.output(hidden_states, gather_dim=0, tp_mode=self.tp_mode)
+            hidden_states = self.output(hidden_states)
 
         return hidden_states
-
-
-@MODEL_INITIALIZER.register_module(module_name=MODEL_TYPE)
-def build_model_with_cfg(
-    # num_chunks=1,
-    checkpoint=False,
-    dtype=torch.float,
-    embed_split_hidden=False,
-    num_layers=48,
-    hidden_size=2048,
-    vocab_size=50304,
-    embed_grad_scale=1,
-    parallel_output=True,
-    num_attention_heads=32,
-    num_kv_attention_heads=None,
-    mlp_ratio=4.0,
-    residual_in_fp32=False,
-    norm_type="rmsnorm",
-    adapt_hf=False,
-    drop_rate=0,
-    attn_drop_rate=0,
-    apply_post_layer_norm=False,  # pylint: disable=W0613
-    no_bias=False,
-    deepnorm=False,
-    layer_norm_epsilon=1e-5,
-    is_reward=False,
-    dropout_selective_checkpoint=True,
-    use_scaled_init: bool = True,
-    use_swiglu: bool = True,
-    # use_flash_attn: bool = True,
-    embedding_init_std: float = 0.02,
-    attn_wqkv_init_std: float = 0.02,
-    attn_other_init_std: float = 0.02,
-    ffn_uplayer_init_std: float = 0.02,
-    ffn_other_init_std: float = 0.02,
-    out_head_init_std: float = 0.02,
-    init_type: str = "normal",
-    rope_base: int = 10000,
-):
-    """
-    Builde model with config
-
-    Args:
-        num_chunks (int): The number of partitions in pipeline parallel. 1 by default.
-        checkpoint (bool): Whether to use checkpointing to save VRAM. False by default.
-        dtype (torch.dtype): The type of data. torch.float by default.
-        embed_split_hidden (bool): Split the embedding layer in the hidden state dimention or vocabulary dimention.
-                                    False by default.
-        num_layers (int): The number of layer. 48 by default.
-        hidden_size (int): The size of hidden state. 2048 by default.
-        vocab_size (int): The size of vocabulary. 50304 by default.
-        embed_grad_scale (float): Refer to GLM-130B, for training stability. 0.1 by default.
-        parallel_output (bool): If it is necessary to collect the output of parallel computing. True by default.
-        num_attention_heads (int): The number of attention head. 32 by default.
-        mlp_ratio (int): The ratio of MLP layers. 4.0 by default.
-        residual_in_fp32 (bool): Whether to use residual in fp32. False by default. It cannot be used temporarily
-                                 because this parameter requires inconsistent data types to be passed between pipelines,
-                                 which requires significant modifications to internlm.
-        norm_type (str): Normalization type. Use RMSNorm or LayerNorm. "rmsnorm" by default.
-        drop_rate (float): The dropout rate of input hidden state. 0 by default.
-        attn_drop_rate (float): The dropout rate of attention module. 0 by default.
-        apply_post_layer_norm (bool): Whether to apply post layer norm. False by default.
-        layer_norm_epsilon (float): A value added to the denominator for numerical stability. 1e-5 by default.
-        is_reward (bool): Whether to use reward model. False by default.
-        dropout_selective_checkpoint (bool): It can only be enabled when checkpoint is disabled. True by default.
-        use_scaled_init (bool): Whether to use scaled init. True by default.
-        use_swiglu (bool): Whether to use swiglu. True by default.
-        use_flash_attn (bool): Whether to use flash-attn. True by default.
-        embedding_init_std (float): std used to init embedding weight. 0.02 by default,
-        attn_wqkv_init_std (float): std used to init attn_wqkv weight. 0.02 by default,
-        attn_other_init_std (float): std used to init attn_other weight. 0.02 by default,
-        ffn_uplayer_init_std (float): std used to init w1, w2 weight in ffn when using glu
-            otherwise init fc1 weight in ffn. 0.02 by default,
-        ffn_other_init_std (float): std used to init ffn_other weight. 0.02 by default,
-        out_head_init_std (float): std used to init output lmhead weight. 0.02 by default,
-        init_type (str): Initialization type. Use uniform or normal. "normal" by default,
-        rope_base (int): The value of `base` for rotary position embeddings. 10000 by default.
-    """
-    if deepnorm:
-        raise AssertionError("deepnorm will not be supported in future versions." "Use early versions if necessary.")
-
-    cfg = dict(
-        num_layers=num_layers,
-        hidden_size=hidden_size,
-        num_attention_heads=num_attention_heads,
-        num_kv_attention_heads=num_kv_attention_heads if num_kv_attention_heads else num_attention_heads,
-        checkpoint=checkpoint,
-        dtype=dtype,
-        embed_split_hidden=embed_split_hidden,
-        vocab_size=vocab_size,
-        embed_grad_scale=embed_grad_scale,
-        parallel_output=parallel_output,
-        mlp_ratio=mlp_ratio,
-        apply_post_layer_norm=apply_post_layer_norm,
-        no_bias=no_bias,
-        residual_in_fp32=residual_in_fp32,
-        norm_type=norm_type,
-        adapt_hf=adapt_hf,
-        drop_rate=drop_rate,
-        attn_drop_rate=attn_drop_rate,
-        layer_norm_epsilon=layer_norm_epsilon,
-        is_reward=is_reward,
-        dropout_selective_checkpoint=dropout_selective_checkpoint,
-        use_scaled_init=use_scaled_init,
-        use_swiglu=use_swiglu,
-        # use_flash_attn=use_flash_attn,
-        embedding_init_std=embedding_init_std,
-        attn_wqkv_init_std=attn_wqkv_init_std,
-        attn_other_init_std=attn_other_init_std,
-        ffn_uplayer_init_std=ffn_uplayer_init_std,
-        ffn_other_init_std=ffn_other_init_std,
-        out_head_init_std=out_head_init_std,
-        init_type=init_type,
-        rope_base=rope_base,
-    )
-
-    return PackedFlashLlama1D(**cfg)

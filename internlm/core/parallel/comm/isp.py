@@ -5,7 +5,7 @@ communication for isp parallel.
 """
 
 from dataclasses import dataclass
-from functools import partial, singledispatch
+from functools import partial
 from typing import Any, Callable, Dict, List, Tuple, Union
 
 import torch
@@ -15,12 +15,20 @@ from torch import nn
 from internlm.core.context import ParallelMode
 from internlm.core.context import global_context as gpc
 from internlm.core.naive_amp import NaiveAMPModel
-from internlm.core.parallel.comm.utils import (DUMMY_HANDLE_CONST,
-                                               AsyncCommHandle, all_gather_raw,
-                                               reduce_scatter_raw)
+from internlm.core.parallel.comm.utils import (
+    DUMMY_HANDLE_CONST,
+    AsyncCommHandle,
+    all_gather_raw,
+    reduce_scatter_raw,
+)
 from internlm.model.modules.linear import ParallelLinearWithCommExt
 from internlm.utils.common import SchedulerHook
-from internlm.utils.utils import params_dispatch_with_condition, check_attention_argument, QKVPackType, CuSeqlenType
+from internlm.utils.utils import (
+    CuSeqlenType,
+    QKVPackType,
+    check_attention_argument,
+    params_dispatch_with_condition,
+)
 
 
 @dataclass
@@ -720,17 +728,17 @@ def auto_wrap_distributed_attention(cls: nn.Module) -> Callable[[bool, Any, floa
     """
     Wrap a local attention module to a distributed one, which will be used in the ISP parallelism.
     """
+
     # should we impl distributed attention as a metaclass?
     def _attetion_constructor(
         local_attn_cls: type, causal=False, softmax_scale=None, attention_dropout=0.0
     ) -> nn.Module:
-        return DistributedAttention(
-            local_attention=local_attn_cls(causal, softmax_scale, attention_dropout),
-            sequence_process_group=gpc.get_group(ParallelMode.TENSOR),
-        )
+        if gpc.config.parallel["tensor"].get("mode", "mtp") != "isp":
+            return local_attn_cls(causal, softmax_scale, attention_dropout)
+        else:
+            return DistributedAttention(
+                local_attention=local_attn_cls(causal, softmax_scale, attention_dropout),
+                sequence_process_group=gpc.get_group(ParallelMode.TENSOR),
+            )
 
-    if gpc.config.parallel["tensor"].get("mode", "mtp") != "isp":
-        return cls
-    else:
-
-        return partial(_attetion_constructor, local_attn_cls=cls)
+    return partial(_attetion_constructor, local_attn_cls=cls)
