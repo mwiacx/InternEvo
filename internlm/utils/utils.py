@@ -65,7 +65,10 @@ def check_attention_argument(*args, **kwargs) -> str:
 
     def __cu_seqlens_checker(num_args: int, check_idx: int):
         if num_args < (check_idx + 1):
-            return "cu_seqlens" in kwargs or "cu_seqlens_q" in kwargs
+            if check_idx == 2:
+                return "cu_seqlens" in kwargs and kwargs["cu_seqlens"] is not None
+            else:
+                return "cu_seqlens_q" in kwargs and kwargs["cu_seqlens_q"] is not None
         else:
             return isinstance(num_args[check_idx], torch.Tensor)
 
