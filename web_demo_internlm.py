@@ -4,9 +4,9 @@ Directly load models in internlm format for interactive dialogue.
 import logging
 
 import streamlit as st
-import torch
 from sentencepiece import SentencePieceProcessor
 
+from internlm.accelerator import get_accelerator
 from tools.interface import GenerationConfig
 from tools.load_internlm_model import (
     initialize_internlm_model,
@@ -14,6 +14,7 @@ from tools.load_internlm_model import (
 )
 
 logger = logging.getLogger(__file__)
+internlm_accelerator = get_accelerator()
 
 
 MODEL_CONFIG_MAP = {
@@ -115,7 +116,7 @@ def combine_history(prompt):
 
 
 def main():
-    # torch.cuda.empty_cache()
+    # internlm_accelerator.empty_cache()
     print("load model begin.")
     model, tokenizer = load_model()
     print("load model end.")
@@ -161,7 +162,7 @@ def main():
         st.session_state.messages.append(
             {"role": "robot", "content": cur_response, "avatar": robot_avator}  # pylint: disable=W0631
         )
-        torch.cuda.empty_cache()
+        internlm_accelerator.empty_cache()
 
 
 if __name__ == "__main__":

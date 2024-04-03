@@ -4,7 +4,6 @@
 communication for isp parallel.
 """
 
-from dataclasses import dataclass
 from functools import partial
 from typing import Any, Callable, Dict, List, Tuple, Union
 
@@ -22,7 +21,7 @@ from internlm.core.parallel.comm.utils import (
     reduce_scatter_raw,
 )
 from internlm.model.modules.linear import ParallelLinearWithCommExt
-from internlm.utils.common import SchedulerHook
+from internlm.utils.common import SchedulerHook, get_current_device
 from internlm.utils.utils import (
     CuSeqlenType,
     QKVPackType,
@@ -31,16 +30,25 @@ from internlm.utils.utils import (
 )
 
 
-@dataclass
 class ISPCommModelConfig:
     """
     model config for isp communicator.
     """
 
-    dtype: torch.dtype = torch.half
-    device: torch.device = torch.device("cuda")
-    activation_checkpointing: float = 0.0
-    module_shapes: Dict[str, torch.Size] = None
+    def __init__(
+        self,
+        dtype: torch.dtype = torch.half,
+        device: torch.device = None,
+        activation_checkpointing: float = 0.0,
+        module_shapes: Dict[str, torch.Size] = None,
+    ) -> None:
+        self.dtype = dtype
+        if device is None:
+            self.device = get_current_device()
+        else:
+            self.device = device
+        self.activation_checkpointing = activation_checkpointing
+        self.module_shapes = module_shapes
 
 
 class MemoryPool:
@@ -635,7 +643,6 @@ class DistributedAttention(nn.Module):
 
     @params_dispatch_with_condition(condition=check_attention_argument)
     def forward(self, obj: object) -> torch.Tensor:
-        # 使用倒数的方式避免处理 data-packed 和 data-unpacked的区别
         assert False, "Should never arrive"
 
     @forward.register(conditions=(str(QKVPackType.QKVPACKED), str(CuSeqlenType.With)))
@@ -650,15 +657,15 @@ class DistributedAttention(nn.Module):
         Returns:
             * output (Tensor): context output
         """
-        # qkv shape: [packlen, 3, n_head, head_dim] or [batch, seqlen, 3, n_head, head_dim]
+        # qkv shape: [1, packlen, 3, n_head, head_dim] or [batch, seqlen, 3, n_head, head_dim]
         # scatter in n_head and gather in seqlen(packlen)
-        qkv = _SeqAllToAll.apply(self.spg, qkv, scatter_idx=-2, gather_idx=-4)
+        qkv = _SeqAllToAll.apply(self.spg, qkv, scatter_idx=3, gather_idx=1)
 
         context = self.local_attn(qkv, **kwargs)
 
-        # context shape: [packlen, n_head, head_dim] or [batch, seqlen, n_head, head_dim]
+        # context shape: [1, packlen, n_head, head_dim] or [batch, seqlen, n_head, head_dim]
         # scatter in seqlen(packlen) and gather in n_head
-        context = _SeqAllToAll.apply(self.spg, context, scatter_idx=-3, gather_idx=-2)
+        context = _SeqAllToAll.apply(self.spg, context, scatter_idx=1, gather_idx=2)
 
         return context
 
@@ -675,18 +682,18 @@ class DistributedAttention(nn.Module):
         Returns:
             output (Tensor): context output
         """
-        # q shpae: [packlen, n_head, head_dim] or [batch, seqlen, n_head, head_dim]
+        # q shpae: [1, packlen, n_head, head_dim] or [batch, seqlen, n_head, head_dim]
         # scatter in n_head and gather in seqlen(packlen)
-        q = _SeqAllToAll.apply(self.spg, q, scatter_idx=-2, gather_idx=-3)
-        # kv shape: [packlen, 2, n_head, head_dim] or [batch, seqlen, 2, n_head, head_dim]
+        q = _SeqAllToAll.apply(self.spg, q, scatter_idx=2, gather_idx=1)
+        # kv shape: [1, packlen, 2, n_head, head_dim] or [batch, seqlen, 2, n_head, head_dim]
         # scatter in n_head and gather in seqlen(packlen)
-        kv = _SeqAllToAll.apply(self.spg, kv, scatter_idx=-2, gather_idx=-4)
+        kv = _SeqAllToAll.apply(self.spg, kv, scatter_idx=3, gather_idx=1)
 
         context = self.local_attn(q, kv, **kwargs)
 
-        # context shape: [packlen, n_head, head_dim] or [batch, seqlen, n_head, head_dim]
+        # context shape: [1, packlen, n_head, head_dim] or [batch, seqlen, n_head, head_dim]
         # scatter in seqlen(packlen) and gather in n_head
-        context = _SeqAllToAll.apply(self.spg, context, scatter_idx=-3, gather_idx=-2)
+        context = _SeqAllToAll.apply(self.spg, context, scatter_idx=1, gather_idx=2)
 
         return context
 
@@ -705,21 +712,21 @@ class DistributedAttention(nn.Module):
             * output (Tensor): context output
         """
         # self._scatter_gather_idx["q"] = [1, 0]  # q/k/v shape: [sequence, head, head_dim]
-        # q shpae: [packlen, n_head, head_dim] or [batch, seqlen, n_head, head_dim]
+        # q shpae: [1, packlen, n_head, head_dim] or [batch, seqlen, n_head, head_dim]
         # scatter in n_head and gather in seqlen(packlen)
-        q = _SeqAllToAll.apply(self.spg, q, scatter_idx=-2, gather_idx=-3)
-        # k shpae: [packlen, n_head, head_dim] or [batch, seqlen, n_head, head_dim]
+        q = _SeqAllToAll.apply(self.spg, q, scatter_idx=2, gather_idx=1)
+        # k shpae: [1, packlen, n_head, head_dim] or [batch, seqlen, n_head, head_dim]
         # scatter in n_head and gather in seqlen(packlen)
-        k = _SeqAllToAll.apply(self.spg, k, scatter_idx=-2, gather_idx=-3)
-        # v shpae: [packlen, n_head, head_dim] or [batch, seqlen, n_head, head_dim]
+        k = _SeqAllToAll.apply(self.spg, k, scatter_idx=2, gather_idx=1)
+        # v shpae: [1, packlen, n_head, head_dim] or [batch, seqlen, n_head, head_dim]
         # scatter in n_head and gather in seqlen(packlen)
-        v = _SeqAllToAll.apply(self.spg, v, scatter_idx=-2, gather_idx=-3)
+        v = _SeqAllToAll.apply(self.spg, v, scatter_idx=2, gather_idx=1)
 
         context = self.local_attn(q, k, v, **kwargs)
 
-        # context shape: [packlen, n_head, head_dim] or [batch, seqlen, n_head, head_dim]
+        # context shape: [1, packlen, n_head, head_dim] or [batch, seqlen, n_head, head_dim]
         # scatter in seqlen(packlen) and gather in n_head
-        context = _SeqAllToAll.apply(self.spg, context, scatter_idx=-3, gather_idx=-2)
+        context = _SeqAllToAll.apply(self.spg, context, scatter_idx=1, gather_idx=2)
 
         return context
 

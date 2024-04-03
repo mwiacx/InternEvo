@@ -116,14 +116,14 @@ from internlm.model.ops.attention import CrossAttention, SelfAttention
 #                     -1, kv.shape[-3], kv.shape[-2], kv.shape[-1]
 #                 )
 
-#                 # if gpc.config.model.dtype is torch.float32 and gpc.config.model.use_flash_attn:
-#                 #     with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+#                 # if gpc.config.model.dtype is torch.float32 and gpc.config.model.use_cuda_flash_attn:
+#                 #     with internlm_accelerator.amp.autocast(dtype=torch.bfloat16):
 #                 #         if total_q.dtype not in [torch.float16, torch.bfloat16]:
 #                 #             total_q = total_q.to(torch.bfloat16)
 #                 #         if total_kv.dtype not in [torch.float16, torch.bfloat16]:
 #                 #             total_kv = total_kv.to(torch.bfloat16)
 
-#                 # if gpc.config.model.use_flash_attn:
+#                 # if gpc.config.model.use_cuda_flash_attn:
 #                 #     try:
 #                 #         from flash_attn.flash_attn_interface import (
 #                 #             flash_attn_unpadded_func,
@@ -250,7 +250,7 @@ from internlm.model.ops.attention import CrossAttention, SelfAttention
 #             kv = torch.where(torch.isnan(kv), 0, kv)
 
 #             if hasattr(inference_params, "attention_mask") and inference_params.attention_mask is not None:
-#                 assert self.use_flash_attn is True
+#                 assert self.use_cuda_flash_attn is True
 #                 from flash_attn.flash_attn_interface import FlashAttnVarlenKVPackedFunc
 
 #                 if inference_params.sequence_len_offset == 0:  # First entrance, attnmask (bs*seqlen*seqlen)
@@ -279,7 +279,7 @@ from internlm.model.ops.attention import CrossAttention, SelfAttention
 #                     #         total_q = total_q.to(torch.bfloat16)
 #                     #     if total_kv.dtype not in [torch.float16, torch.bfloat16]:
 #                     #         total_kv = total_kv.to(torch.bfloat16)
-#                     #     with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+#                     #     with internlm_accelerator.amp.autocast(dtype=torch.bfloat16):
 #                     #         output = FlashAttnVarlenKVPackedFunc.apply(
 #                     #             total_q,
 #                     #             total_kv,
@@ -339,12 +339,12 @@ from internlm.model.ops.attention import CrossAttention, SelfAttention
 #                         v.unsqueeze(3).expand(-1, -1, -1, expansion, -1).reshape(sp[0], sp[1], q.size(2), sp[3]),
 #                     )
 #             else:
-#                 # if self.dtype is torch.float32 and self.use_flash_attn:
+#                 # if self.dtype is torch.float32 and self.use_cuda_flash_attn:
 #                 #     if q.dtype not in [torch.float16, torch.bfloat16]:
 #                 #         q = q.to(torch.bfloat16)
 #                 #     if kv.dtype not in [torch.float16, torch.bfloat16]:
 #                 #         kv = kv.to(torch.bfloat16)
-#                 #     with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+#                 #     with internlm_accelerator.amp.autocast(dtype=torch.bfloat16):
 #                 #         context = self.inner_cross_attn(q, kv, causal=True).to(self.dtype)
 #                 # else:
 #                 context = self.inner_cross_attn(q, kv, causal=True)
@@ -411,7 +411,7 @@ from internlm.model.ops.attention import CrossAttention, SelfAttention
 #         kv = torch.where(torch.isnan(kv), 0, kv)
 
 #         if hasattr(inference_params, "attention_mask") and inference_params.attention_mask is not None:
-#             assert self.use_flash_attn is True
+#             assert self.use_cuda_flash_attn is True
 #             from flash_attn import flash_attn_varlen_kvpacked_func
 
 #             if inference_params.sequence_len_offset == 0:  # First entrance, attnmask (bs*seqlen*seqlen)
@@ -439,7 +439,7 @@ from internlm.model.ops.attention import CrossAttention, SelfAttention
 #                         total_q = total_q.to(torch.bfloat16)
 #                     if total_kv.dtype not in [torch.float16, torch.bfloat16]:
 #                         total_kv = total_kv.to(torch.bfloat16)
-#                     with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+#                     with internlm_accelerator.amp.autocast(dtype=torch.bfloat16):
 #                         output = flash_attn_varlen_kvpacked_func(
 #                             q=total_q,
 #                             kv=total_kv,
@@ -495,12 +495,12 @@ from internlm.model.ops.attention import CrossAttention, SelfAttention
 #                     v.unsqueeze(3).expand(-1, -1, -1, expansion, -1).reshape(sp[0], sp[1], q.size(2), sp[3]),
 #                 )
 #         else:
-#             if self.dtype is torch.float32 and self.use_flash_attn:
+#             if self.dtype is torch.float32 and self.use_cuda_flash_attn:
 #                 if q.dtype not in [torch.float16, torch.bfloat16]:
 #                     q = q.to(torch.bfloat16)
 #                 if kv.dtype not in [torch.float16, torch.bfloat16]:
 #                     kv = kv.to(torch.bfloat16)
-#                 with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+#                 with internlm_accelerator.amp.autocast(dtype=torch.bfloat16):
 #                     context = self.inner_cross_attn(q, kv, causal=True).to(self.dtype)
 #             else:
 #                 context = self.inner_cross_attn(q, kv, causal=True)
@@ -523,7 +523,7 @@ class QKVPackedMHA(nn.Module):
         rotary_emb_dim (int): The dimention of Rotary Embedding. 0 by default.
         rotary_emb_scale_base (int): The scaling factor of Rotary Embedding. If scale_base > 0, this implements
                                     XPos(Sun et al., https://arxiv.org/abs/2212.10554). 0 by default.
-        use_flash_attn (bool): Whether to use flash-attn. True by default.
+        use_cuda_flash_attn (bool): Whether to use flash-attn. True by default.
         rope_base (int): The value of `base` for rotary position embeddings. 10000 by default.
         device (Optional[Union[str, torch.device]]): The device will be used.
         dtype (Optional[torch.dtype]): The type of data.
@@ -596,7 +596,7 @@ class QKVPackedMHA(nn.Module):
         assert _inference_params is None, "inference_params is not None"
 
         qkv = self.Wqkv(x)
-        qkv = rearrange(qkv, "... (three h d) -> ... three h d", three=3, d=self.head_dim)
+        qkv = rearrange(qkv, "b s (three h d) -> b s three h d", three=3, d=self.head_dim)
 
         q = qkv[..., 0, :, :].squeeze(2)
         k = qkv[..., 1, :, :].squeeze(2)
@@ -605,8 +605,8 @@ class QKVPackedMHA(nn.Module):
         indexes = 0 if indexes is None else indexes
         self.rotary_emb(q, offsets=indexes, cache_type="query", in_place=True)
         self.rotary_emb(k, offsets=indexes, cache_type="key", in_place=True)
-        # if gpc.config.model.dtype is torch.float32 and gpc.config.model.use_flash_attn:
-        #     with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+        # if gpc.config.model.dtype is torch.float32 and gpc.config.model.use_cuda_flash_attn:
+        #     with internlm_accelerator.amp.autocast(dtype=torch.bfloat16):
         #         if qkv.dtype not in [torch.float16, torch.bfloat16]:
         #             qkv = qkv.to(torch.bfloat16)
         #         context = self.inner_attn(qkv).to(x.dtype)
@@ -623,7 +623,7 @@ class QKVPackedMHA(nn.Module):
         # context = rearrange(context, "b s h d -> b s (h d)")
         # else:
         # context = rearrange(context, "b s h d -> (b s) (h d)")
-        context = rearrange(context, "... h d -> ... (h d)")
+        context = rearrange(context, "b s h d -> b s (h d)")
 
         out = self.out_proj(context)
         return out
@@ -648,11 +648,11 @@ class QKVSplitedGQA(nn.Module):
         rotary_emb_dim (int): The dimention of Rotary Embedding. 0 by default.
         rotary_emb_scale_base (int): The scaling factor of Rotary Embedding. If scale_base > 0, this implements
                                     XPos(Sun et al., https://arxiv.org/abs/2212.10554). 0 by default.
-        use_flash_attn (boolean): Whether to use flash attention or not.If False, vanilla attention module will be used.
+        use_cuda_flash_attn (boolean): Whether to use flash attention or not.If False, vanilla attention module will be used.
                                     False by default.
         device (Optional[Union[str, torch.device]]): The device will be used.
         dtype (Optional[torch.dtype]): The type of data.
-        use_flash_attn (bool): Whether to use flash-attn. True by default.
+        use_cuda_flash_attn (bool): Whether to use flash-attn. True by default.
         rope_base (int): The value of `base` for rotary position embeddings. 10000 by default.
         tp_mode (str): The string value of tensor parallel mode, should be in ["mtp", "msp", "fsp", "isp"],
                        "mtp" by default.
@@ -674,7 +674,7 @@ class QKVSplitedGQA(nn.Module):
         rope_base: int = 10000,
         rotary_emb_dim: int = 0,
         rotary_emb_scale_base: int = 0,
-        # use_flash_attn: bool = True,
+        # use_cuda_flash_attn: bool = True,
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None,
         rot_embed_HF_impl: Optional[bool] = False,
@@ -689,7 +689,7 @@ class QKVSplitedGQA(nn.Module):
         self.head_dim = self.embed_dim // num_heads
         self.kv_dim = self.head_dim * num_kv_heads
         self.rotary_emb_dim = rotary_emb_dim
-        # self.use_flash_attn = use_flash_attn
+        # self.use_cuda_flash_attn = use_cuda_flash_attn
         # self.dtype = dtype
         # self.tp_mode = tp_mode
         self.rot_embed_HF_impl = rot_embed_HF_impl
@@ -711,12 +711,12 @@ class QKVSplitedGQA(nn.Module):
         self.wk = new_linear("wk", embed_dim, self.kv_dim, bias, **factory_kwargs)
         self.wv = new_linear("wv", embed_dim, self.kv_dim, bias, **factory_kwargs)
 
-        # if use_flash_attn:
+        # if use_cuda_flash_attn:
         #     from flash_attn import flash_attn_varlen_kvpacked_func
         #     from flash_attn.modules.mha import FlashCrossAttention, FlashSelfAttention
 
-        # inner_attn_cls = FlashSelfAttention if use_flash_attn else SelfAttention
-        # inner_cross_attn_cls = FlashCrossAttention if use_flash_attn else CrossAttention
+        # inner_attn_cls = FlashSelfAttention if use_cuda_flash_attn else SelfAttention
+        # inner_cross_attn_cls = FlashCrossAttention if use_cuda_flash_attn else CrossAttention
         self.inner_attn = SelfAttention(causal=causal, softmax_scale=softmax_scale, attention_dropout=dropout)
         self.inner_cross_attn = CrossAttention(causal=causal, softmax_scale=softmax_scale, attention_dropout=dropout)
 
@@ -724,7 +724,7 @@ class QKVSplitedGQA(nn.Module):
         # self.inner_cross_attn_softmax_scale = softmax_scale
         # self.inner_cross_attn_dropout = dropout
 
-        # self.attn = flash_attn_varlen_kvpacked_func if use_flash_attn else SelfAttention
+        # self.attn = flash_attn_varlen_kvpacked_func if use_cuda_flash_attn else SelfAttention
         # if self.tp_mode == "isp":
         #     self.attn = DistributedAttention(self.attn, sequence_process_group=sequence_process_group)
 
@@ -762,9 +762,9 @@ class QKVSplitedGQA(nn.Module):
 
         q, k, v = self.wq(x), self.wk(x), self.wv(x)
 
-        q = rearrange(q, "... (h d) -> ... h d", d=self.head_dim)
-        k = rearrange(k, "... (h d) -> ... h d", d=self.head_dim)
-        v = rearrange(v, "... (h d) -> ... h d", d=self.head_dim)
+        q = rearrange(q, "b s (h d) -> b s h d", d=self.head_dim)
+        k = rearrange(k, "b s (h d) -> b s h d", d=self.head_dim)
+        v = rearrange(v, "b s (h d) -> b s h d", d=self.head_dim)
 
         if self.rotary_emb_dim > 0:
             indexes = kwargs.pop("indexes", 0)
@@ -807,7 +807,7 @@ class QKVPackedGQA(nn.Module):
         rotary_emb_dim (int): The dimention of Rotary Embedding. 0 by default.
         rotary_emb_scale_base (int): The scaling factor of Rotary Embedding. If scale_base > 0, this implements
                                     XPos(Sun et al., https://arxiv.org/abs/2212.10554). 0 by default.
-        use_flash_attn (bool): Whether to use flash attention or not.If False, vanilla attention module will be used.
+        use_cuda_flash_attn (bool): Whether to use flash attention or not.If False, vanilla attention module will be used.
                                False by default.
         device (Optional[Union[str, torch.device]]): The device will be used.
         dtype (Optional[torch.dtype]): The type of data.
@@ -831,7 +831,7 @@ class QKVPackedGQA(nn.Module):
         causal: bool = False,
         layer_idx: int = None,
         use_dynamic_ntk_rope: bool = False,
-        # use_flash_attn: bool = True,
+        # use_cuda_flash_attn: bool = True,
         rope_base: int = 10000,
         rotary_emb_dim: int = 0,
         rotary_emb_scale_base: int = 0,

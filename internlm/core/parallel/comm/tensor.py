@@ -22,7 +22,8 @@ from internlm.core.parallel.comm.utils import (
 )
 
 # input gather dim
-__INPUT_GATHER_DIM = -2  # shape: [batch, seqlen, dim] or [packlen, dim]
+_GATHER_DIM = 1  # shape: [batch, seqlen, dim] or [1, packlen, dim]
+_REDUCE_DIM = 1  # shape: [batch, seqlen, dim] or [1, packlen, dim]
 
 
 class LinearRole(Enum):
@@ -153,9 +154,7 @@ class SequenceParallelCommunicator(TPCommunicator):
         ):
             return _input, DUMMY_HANDLE_CONST
 
-        return all_gather_raw(
-            _input, process_group=self._process_group, async_op=async_op, gather_dim=__INPUT_GATHER_DIM
-        )
+        return all_gather_raw(_input, process_group=self._process_group, async_op=async_op, gather_dim=_GATHER_DIM)
 
     def grad_output_hook(
         self, grad_output: torch.Tensor, async_op: bool = False
@@ -166,9 +165,7 @@ class SequenceParallelCommunicator(TPCommunicator):
         if dist.get_world_size(self._process_group) <= 1 or self._role == LinearRole.COLUMN:
             return grad_output, DUMMY_HANDLE_CONST
 
-        return all_gather_raw(
-            grad_output, process_group=self._process_group, async_op=async_op, gather_dim=__INPUT_GATHER_DIM
-        )
+        return all_gather_raw(grad_output, process_group=self._process_group, async_op=async_op, gather_dim=_GATHER_DIM)
 
     def grad_input_hook(self, grad_input: torch.Tensor, async_op: bool = False) -> Tuple[torch.Tensor, AsyncCommHandle]:
         """
@@ -177,7 +174,9 @@ class SequenceParallelCommunicator(TPCommunicator):
         if dist.get_world_size(self._process_group) <= 1 or self._role == LinearRole.ROW:
             return grad_input, DUMMY_HANDLE_CONST
 
-        return reduce_scatter_raw(grad_input, process_group=self._process_group, async_op=async_op)
+        return reduce_scatter_raw(
+            grad_input, process_group=self._process_group, async_op=async_op, reduce_dim=_REDUCE_DIM
+        )
 
     def output_hook(self, output: torch.Tensor, async_op: bool = False) -> Tuple[torch.Tensor, AsyncCommHandle]:
         """
@@ -186,7 +185,7 @@ class SequenceParallelCommunicator(TPCommunicator):
         if dist.get_world_size(self._process_group) <= 1 or self._role == LinearRole.COLUMN:
             return output, DUMMY_HANDLE_CONST
 
-        return reduce_scatter_raw(output, process_group=self._process_group, async_op=async_op)
+        return reduce_scatter_raw(output, process_group=self._process_group, async_op=async_op, reduce_dim=_REDUCE_DIM)
 
 
 class HeadTensorParallelCommunicator(TensorParallelCommunicator):

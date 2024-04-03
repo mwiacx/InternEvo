@@ -1,6 +1,7 @@
 """
 Linear Modules
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional, Union
@@ -10,6 +11,7 @@ import torch.distributed as dist
 from torch import nn
 from torch.cuda.amp import custom_bwd, custom_fwd
 
+from internlm.accelerator import get_accelerator
 from internlm.core.context import global_context as gpc
 from internlm.core.parallel.comm.tensor import TPCommunicator
 from internlm.core.parallel.shard import (
@@ -24,6 +26,10 @@ if TYPE_CHECKING:
     from internlm.core.parallel.comm.isp import ISPCommunicator
 
 logger = get_logger(__file__)
+internlm_accelerator = get_accelerator()
+
+custom_bwd = internlm_accelerator.return_custom_bwd()
+custom_fwd = internlm_accelerator.return_custom_fwd()
 
 
 # adpated from https://github.com/Dao-AILab/flash-attention/blob/main/flash_attn/ops/fused_dense.py

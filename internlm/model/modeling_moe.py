@@ -41,7 +41,7 @@ class PackedFlashBaseLayer1D(nn.Module):
         residual_in_fp32 (bool): Whether to use residual in fp32. False by default.
         device (Optional[Union[str, torch.device]]): The device will be used.
         norm_type (str): Use RMS norm or layernorm."rmsnorm" by default.
-        use_flash_attn (bool): Whether use flash-attn. True by default.
+        use_cuda_flash_attn (bool): Whether use flash-attn. True by default.
         num_experts (int): The number of experts. <=1 means dense, >1 means MoE. 1 by default.
         moe_use_residual (bool, optional): default=False, make this MoE layer a Residual MoE
                                           (https://arxiv.org/abs/2201.05596) layer.
@@ -67,16 +67,17 @@ class PackedFlashBaseLayer1D(nn.Module):
         dropout_selective_checkpoint: bool = True,
         use_scaled_init: bool = True,
         use_swiglu: bool = True,
-        # use_flash_attn: bool = True,
+        # use_cuda_flash_attn: bool = True,
         num_experts: int = 1,
-        # tp_mode: str = "mtp",
+        mlp_layer_fusion: bool = False,
+        multiple_of: int = 256,
     ):
         super().__init__()
         self.checkpoint = checkpoint
         # dropout selective checkpoint can only be enabled when checkpoint is disabled.
         self.dropout_selective_checkpoint = dropout_selective_checkpoint is True and checkpoint is False
         self.layer_idx = layer_idx
-        # self.use_flash_attn = use_flash_attn
+        # self.use_cuda_flash_attn = use_cuda_flash_attn
 
         head_dim = hidden_size // num_attention_heads
         # self.tp_mode = tp_mode
@@ -94,7 +95,7 @@ class PackedFlashBaseLayer1D(nn.Module):
             use_dynamic_ntk_rope=use_dynamic_ntk_rope,
             rotary_emb_dim=head_dim,
             rotary_emb_scale_base=0,
-            # use_flash_attn=use_flash_attn,
+            # use_cuda_flash_attn=use_cuda_flash_attn,
             device=device,
             dtype=dtype,
             # tp_mode=self.tp_mode,
@@ -117,15 +118,21 @@ class PackedFlashBaseLayer1D(nn.Module):
                     bias=False,
                     device=device,
                     dtype=dtype,
+                    mlp_layer_fusion=mlp_layer_fusion,
+                    multiple_of=multiple_of,
                 )
             else:
                 # TODO: support gelu and so on.
                 raise ValueError("NYI")
         else:
             # replace mlp by MoE module. The expert in MoE is a FeedForward module.
+            # mlp_cls = get_mlp_cls(self.tp_mode)
             self.mlp = MoE(
-                hidden_size=hidden_size,
+                hidden_size,
+                int(hidden_size * mlp_ratio),
+                out_features=hidden_size,
                 num_experts=num_experts,
+                # ep_cls=mlp_cls,  # TODO: check it.
                 ep_group=gpc.get_group(ParallelMode.EXPERT),
                 ep_size=ep_size,
                 device=device,
@@ -158,7 +165,8 @@ class PackedFlashBaseLayer1D(nn.Module):
                     if self.use_scaled_init and "w2" in name:
                         scaled_init_method_normal(sigma=0.006, num_layers=self.layer_idx + 1)(param.data)
                     else:
-                        normal_(std=0.006 if "w1" in name or "w2" in name else 0.0015)(param.data)
+                        # candidate: w1, w3, fused_w1_w3
+                        normal_(std=0.006 if "w1" in name or "w3" in name else 0.0015)(param.data)
                 else:
                     if self.use_scaled_init and "fc1" not in name:
                         scaled_init_method_normal(sigma=0.006, num_layers=self.layer_idx + 1)(param.data)
@@ -255,7 +263,7 @@ class PackedFlashInternLm1D(nn.Module):
         device (Optional[Union[str, torch.device]]): The device will be used. None by default.
         residual_in_fp32 (bool): Whether to use residual in fp32. False by default.
         norm_type (str): Normalization type. Use RMSNorm or LayerNorm. "rmsnorm" by default.
-        use_flash_attn (bool): Whether to use flash-attn. True by default.
+        use_cuda_flash_attn (bool): Whether to use flash-attn. True by default.
         num_experts (int): The number of experts. <=1 means dense, >1 means MoE. 1 by default.
         moe_use_residual (bool, optional): default=False, make this MoE layer a Residual MoE
                                           (https://arxiv.org/abs/2201.05596) layer.
@@ -289,8 +297,10 @@ class PackedFlashInternLm1D(nn.Module):
         dropout_selective_checkpoint: bool = True,
         use_scaled_init: bool = True,
         use_swiglu: bool = True,
-        # use_flash_attn: bool = True,
+        # use_cuda_flash_attn: bool = True,
         num_experts: bool = 1,
+        mlp_layer_fusion: bool = False,
+        multiple_of: int = 256,
     ):
         super().__init__()
 
@@ -300,7 +310,7 @@ class PackedFlashInternLm1D(nn.Module):
         #     self.tp_mode = gpc.config.parallel["tensor"].get("mode", "mtp")
 
         if first:
-            # if embed_split_hidden or not use_flash_attn:
+            # if embed_split_hidden or not use_cuda_flash_attn:
             self.embedding = Embedding1D(num_embeddings=vocab_size, embedding_dim=hidden_size)
             # else:
             #     from flash_attn.modules.embedding import ParallelGPT2Embeddings
@@ -338,9 +348,10 @@ class PackedFlashInternLm1D(nn.Module):
                     dropout_selective_checkpoint=dropout_selective_checkpoint,
                     use_scaled_init=use_scaled_init,
                     use_swiglu=use_swiglu,
-                    # use_flash_attn=use_flash_attn,
+                    # use_cuda_flash_attn=use_cuda_flash_attn,
                     num_experts=num_experts,
-                    # tp_mode=self.tp_mode,
+                    mlp_layer_fusion=mlp_layer_fusion,
+                    multiple_of=multiple_of,
                 )
                 for lid in range(num_layers)
             ]
@@ -377,8 +388,6 @@ class PackedFlashInternLm1D(nn.Module):
 
         if cu_seqlens is not None:
             cu_seqlens = cu_seqlens.squeeze(0)
-            hidden_states = hidden_states.squeeze(0)  # If cu_seqlens is passed in，it indicated a packed state，
-            # the batch dimension with a size of 1 should be directly squeezed off.
 
         if indexes is not None:
             assert len(indexes) == 1

@@ -33,7 +33,7 @@ def get_parallel_strategies_split_mode(linear_name: str) -> str:
 
     if linear_name in ("head", "output"):
         return "head"
-    elif linear_name in ("wqkv", "wq", "wk", "wv", "wkv", "w1", "w3"):
+    elif linear_name in ("wqkv", "wq", "wk", "wv", "wkv", "w1", "w3", "w13"):
         return "column"
     elif linear_name in ("wo", "out_proj", "w2") and tp_mode == "isp":
         return "column"

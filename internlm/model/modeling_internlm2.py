@@ -5,6 +5,7 @@ from typing import Optional
 import torch
 from torch import nn
 
+from internlm.accelerator import AcceleratorType, get_accelerator
 from internlm.core.context import ParallelMode
 from internlm.core.context.parallel_context import global_context as gpc
 from internlm.core.parallel.comm.utils import split_forward_gather_backward
@@ -44,7 +45,7 @@ class PackedFlashLlamaLayer1D(nn.Module):
         residual_in_fp32 (bool): Whether to use residual in fp32. False by default.
         device (Optional[Union[str, torch.device]]): The device will be used.
         norm_type (str): Use RMS norm or layernorm."rmsnorm" by default.
-        use_flash_attn (bool): Whether use flash-attn. True by default.
+        use_cuda_flash_attn (bool): Whether use flash-attn. True by default.
         tp_mode (str): The string value of tensor parallel mode, should be in ["mtp", "msp", "fsp", "isp"],
                        "mtp" by default.
         attn_wqkv_init_std (float): std used to init attn_wqkv weight. 0.02 by default,
@@ -80,7 +81,7 @@ class PackedFlashLlamaLayer1D(nn.Module):
         dropout_selective_checkpoint: bool = True,
         use_scaled_init: bool = True,
         use_swiglu: bool = True,
-        # use_flash_attn: bool = True,
+        # use_cuda_flash_attn: bool = True,
         # tp_mode: str = "mtp",
         attn_wqkv_init_std: float = 0.02,
         attn_other_init_std: float = 0.02,
@@ -88,13 +89,15 @@ class PackedFlashLlamaLayer1D(nn.Module):
         ffn_other_init_std: float = 0.02,
         init_type: str = "normal",
         rope_base: int = 10000,
+        mlp_layer_fusion: bool = False,
+        multiple_of: int = 256,
     ):
         super().__init__()
         self.checkpoint = checkpoint
         # dropout selective checkpoint can only be enabled when checkpoint is disabled.
         self.dropout_selective_checkpoint = dropout_selective_checkpoint is True and checkpoint is False
         self.layer_idx = layer_idx
-        # self.use_flash_attn = use_flash_attn
+        # self.use_cuda_flash_attn = use_cuda_flash_attn
         self.prenorm = not apply_post_layer_norm
         assert not fused_dropout_add_ln, "dropout_add_layer_norm can not be used here"
         self.fused_dropout_add_ln = fused_dropout_add_ln
@@ -132,7 +135,7 @@ class PackedFlashLlamaLayer1D(nn.Module):
         self.dropout2 = nn.Dropout(drop_rate)
         self.attention_norm = new_layer_norm(norm_type, hidden_size, eps=layer_norm_epsilon)
         self.ffn_norm = new_layer_norm(norm_type, hidden_size, eps=layer_norm_epsilon)
-        # if self.fused_dropout_add_ln and self.use_flash_attn:
+        # if self.fused_dropout_add_ln and self.use_cuda_flash_attn:
         #     from flash_attn.ops.layer_norm import dropout_add_layer_norm
 
         #     assert dropout_add_layer_norm is not None, "dropout_add_ln is not installed"
@@ -146,6 +149,8 @@ class PackedFlashLlamaLayer1D(nn.Module):
                 bias=False,
                 device=device,
                 dtype=dtype,
+                mlp_layer_fusion=mlp_layer_fusion,
+                multiple_of=multiple_of,
             )
         else:
             # TODO: support gelu and so on.
@@ -182,6 +187,7 @@ class PackedFlashLlamaLayer1D(nn.Module):
                     if self.use_scaled_init and "w2" in name:
                         self.scaled_init_func(sigma=self.ffn_other_init_std, num_layers=self.layer_idx + 1)(param.data)
                     else:
+                        # candidate: w1, w3, fused_w1_w3
                         self.init_func(
                             std=self.ffn_uplayer_init_std if "w1" in name or "w3" in name else self.ffn_other_init_std
                         )(param.data)
@@ -313,7 +319,7 @@ class PackedFlashLlama1D(nn.Module):
         device (Optional[Union[str, torch.device]]): The device will be used. None by default.
         residual_in_fp32 (bool): Whether to use residual in fp32. False by default.
         norm_type (str): Normalization type. Use RMSNorm or LayerNorm. "rmsnorm" by default.
-        use_flash_attn (bool): Whether to use flash-attn. True by default.
+        use_cuda_flash_attn (bool): Whether to use flash-attn. True by default.
         embedding_init_std (float): std used to init embedding weight. 0.02 by default,
         attn_wqkv_init_std (float): std used to init attn_wqkv weight. 0.02 by default,
         attn_other_init_std (float): std used to init attn_other weight. 0.02 by default,
@@ -360,7 +366,7 @@ class PackedFlashLlama1D(nn.Module):
         dropout_selective_checkpoint: bool = True,
         use_scaled_init: bool = True,
         use_swiglu: bool = True,
-        # use_flash_attn: bool = True,
+        # use_cuda_flash_attn: bool = True,
         embedding_init_std: float = 0.02,
         attn_wqkv_init_std: float = 0.02,
         attn_other_init_std: float = 0.02,
@@ -370,11 +376,12 @@ class PackedFlashLlama1D(nn.Module):
         init_type: str = "normal",
         rope_base: int = 10000,
         norm_head: bool = False,
-        # tp_mode: str = "mtp",
+        mlp_layer_fusion: bool = False,
+        multiple_of: int = 256,
     ):
         super().__init__()
 
-        # self.use_flash_attn = use_flash_attn
+        # self.use_cuda_flash_attn = use_cuda_flash_attn
 
         if checkpoint_fraction <= 0:
             checkpoint = False
@@ -389,7 +396,7 @@ class PackedFlashLlama1D(nn.Module):
         # sequence_parallel = gpc.config.parallel.get("sequence_parallel", False)
 
         if first:
-            # if embed_split_hidden or not gpc.config.model.use_flash_attn:
+            # if embed_split_hidden or not gpc.config.model.use_cuda_flash_attn:
             self.tok_embeddings = Embedding1D(num_embeddings=vocab_size, embedding_dim=hidden_size)
             # else:
             #     from flash_attn.modules.embedding import ParallelGPT2Embeddings
@@ -436,7 +443,7 @@ class PackedFlashLlama1D(nn.Module):
                     dropout_selective_checkpoint=dropout_selective_checkpoint,
                     use_scaled_init=use_scaled_init,
                     use_swiglu=use_swiglu,
-                    # use_flash_attn=use_flash_attn,
+                    # use_cuda_flash_attn=use_cuda_flash_attn,
                     adapt_hf=adapt_hf,
                     attn_wqkv_init_std=attn_wqkv_init_std,
                     attn_other_init_std=attn_other_init_std,
@@ -445,6 +452,8 @@ class PackedFlashLlama1D(nn.Module):
                     init_type=init_type,
                     # tp_mode=self.tp_mode,
                     rope_base=rope_base,
+                    mlp_layer_fusion=mlp_layer_fusion,
+                    multiple_of=multiple_of,
                 )
                 for lid in range(num_layers)
             ]
@@ -487,8 +496,6 @@ class PackedFlashLlama1D(nn.Module):
 
         if cu_seqlens is not None:
             cu_seqlens = cu_seqlens.squeeze(0)
-            hidden_states = hidden_states.squeeze(0)  # If cu_seqlens is passed in，it indicated a packed state，
-            # the batch dimension with a size of 1 should be directly squeezed off.
 
         if indexes is not None:
             assert len(indexes) == 1

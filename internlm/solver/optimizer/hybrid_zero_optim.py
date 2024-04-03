@@ -10,7 +10,7 @@ import torch
 import torch.distributed as dist
 from torch.optim import Optimizer
 
-from internlm.core.parallel.comm.zero import ParamAsyncBcastHandler
+from internlm.accelerator import get_accelerator
 from internlm.core.context import Config, ParallelMode
 from internlm.core.context import global_context as gpc
 from internlm.core.context.parallel_context import (
@@ -20,6 +20,7 @@ from internlm.core.context.parallel_context import (
     IS_TENSOR_ZERO_PARALLEL,
     IS_WEIGHT_ZERO_PARALLEL,
 )
+from internlm.core.parallel.comm.zero import ParamAsyncBcastHandler
 from internlm.monitor import send_alert_message
 from internlm.solver.optimizer.store import (
     BucketStore,
@@ -48,6 +49,7 @@ from .utils import compute_norm
 
 inf = math.inf
 logger = get_logger(__file__)
+internlm_accelerator = get_accelerator()
 
 
 class HybridZeroOptimizer(BaseOptimizer):
@@ -117,7 +119,7 @@ class HybridZeroOptimizer(BaseOptimizer):
             hysteresis=hysteresis,
             max_scale=max_scale,
         )
-        self._found_overflow = torch.cuda.FloatTensor([0], device=get_current_device())
+        self._found_overflow = torch.tensor([0], device=get_current_device(), dtype=torch.float32)
 
         # gradient clipping
         self._clip_grad_norm = clip_grad_norm
@@ -190,6 +192,8 @@ class HybridZeroOptimizer(BaseOptimizer):
 
             # move to cpu to make room to create the flat tensor
             for param in group_params:
+                if param.requires_grad is False:
+                    continue
                 param.data = param.data.cpu()
 
             # flatten the reordered tensors
@@ -199,7 +203,7 @@ class HybridZeroOptimizer(BaseOptimizer):
                     tensor_list = self._param_store.get_fp16_params_by_rank_group(rank, group_id)
                     with torch.no_grad():
                         flat_tensor = flatten(tensor_list)
-                    flat_tensor = flat_tensor.data.cuda()
+                    flat_tensor = flat_tensor.data.to(get_current_device())
                     self._param_store.add_flat_fp16_param_by_rank_group(rank, group_id, flat_tensor)
                     sync_param(flat_tensor=flat_tensor, tensor_list=tensor_list)
 
@@ -258,6 +262,9 @@ class HybridZeroOptimizer(BaseOptimizer):
 
         sorted_params = sorted(param_list, key=lambda x: x.numel(), reverse=True)
         for i, param in enumerate(sorted_params):
+            if param.requires_grad is False:
+                continue
+
             global_id = str(i)
             for j in range(len(param.size())):
                 global_id = "_".join([global_id, str(param.size()[j])])
@@ -793,7 +800,7 @@ class HybridZeroOptimizer(BaseOptimizer):
                     )
                     fp32_param = self._fp32_flat_param_groups_of_current_rank[group_id]
                     fp16_param.data.copy_(fp32_param)
-        torch.cuda.synchronize()
+        internlm_accelerator.synchronize()
         self.broadcast_params()
 
         timer("step").stop()

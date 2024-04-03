@@ -384,8 +384,11 @@ class GShardMOELayer(BaseMoELayer):
 
     def __init__(
         self,
-        hidden_size: int,
+        in_features: int,
+        hidden_features: int,
+        out_features: int,
         num_experts: int,
+        # ep_cls: Optional[Callable],
         ep_group: Optional[torch.distributed.ProcessGroup],
         ep_size: int,
         top_k: int = 1,
@@ -406,7 +409,7 @@ class GShardMOELayer(BaseMoELayer):
         ), f"Number of experts ({num_experts}) should be divisible by expert parallel size ({ep_size})"
         super().__init__(
             TopKGate(
-                hidden_size,
+                in_features,
                 num_experts,
                 top_k,
                 capacity_factor,
@@ -419,9 +422,9 @@ class GShardMOELayer(BaseMoELayer):
             torch.nn.ModuleList(
                 [
                     new_fead_forward(
-                        hidden_size,
-                        int(hidden_size * gpc.config.model.mlp_ratio),
-                        out_features=hidden_size,
+                        in_features,
+                        hidden_features,
+                        out_features,
                         bias=False,
                         device=device,
                         dtype=dtype,

@@ -12,8 +12,11 @@ from torch import Tensor, nn
 from torch._utils import _flatten_dense_tensors, _unflatten_dense_tensors
 from torch.distributed import ReduceOp
 
+from internlm.accelerator import AcceleratorType, get_accelerator
 from internlm.core.context import ParallelMode
 from internlm.core.context.parallel_context import global_context as gpc
+
+internlm_accelerator = get_accelerator()
 
 
 def set_fp32_attr_to_module(module: nn.Module):
@@ -174,7 +177,7 @@ class NaiveAMPModel(nn.Module):
         def _post_forward_hook_for_fp32(
             model: nn.Module, inputs: tuple, outputs: Union[tuple, Tensor]
         ):  # pylint: disable=W0613
-            assert isinstance(inputs, Union[tuple, Tensor])
+            assert isinstance(inputs, (tuple, Tensor))
             if isinstance(outputs, tuple):
                 return tuple(map(to_dtype, outputs, [self.dtype] * len(outputs)))
             else:
@@ -199,6 +202,7 @@ class NaiveAMPModel(nn.Module):
                 sub_module.register_forward_hook(partial(_post_forward_hook_for_fp32))
             if gpc.config.get("output_tf32", False) and module_is_output(sub_module):
                 sub_module.to(fp32_dtype)
-                torch.backends.cudnn.allow_tf32 = True
-                torch.backends.cuda.matmul.allow_tf32 = True
+                if internlm_accelerator.get_accelerator_backend() == AcceleratorType.GPU:
+                    torch.backends.cudnn.allow_tf32 = True
+                    torch.backends.cuda.matmul.allow_tf32 = True
                 sub_module.register_forward_pre_hook(partial(_pre_forward_hook_for_fp32))

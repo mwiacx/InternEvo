@@ -6,9 +6,11 @@ import torch
 from torch.nn import init
 from torch.nn.parameter import Parameter
 
+from internlm.accelerator import AcceleratorType, get_accelerator
 from internlm.utils.logger import get_logger
 
 logger = get_logger(__file__)
+internlm_accelerator = get_accelerator()
 
 try:
     from apex.normalization.fused_layer_norm import mixed_dtype_fused_rms_norm_affine
@@ -17,6 +19,13 @@ try:
 except (ModuleNotFoundError, ImportError):
     logger.warning("The torch implementation for MixFusedRMSNorm is slower than apex. Please note this!")
     apex_rmsnorm_impl = False
+
+try:
+    from deeplink_ext.internlm_ops.rms_norm import DeepLinkRMSNormWithNormalizedShape
+
+    deeplink_rmsnorm_impl = True
+except (ModuleNotFoundError, ImportError):
+    deeplink_rmsnorm_impl = False
 
 
 def manual_rms_norm(my_input, weight, normalized_shape, eps):
@@ -35,7 +44,7 @@ def manual_rms_norm(my_input, weight, normalized_shape, eps):
     return weight * my_input
 
 
-class RMSNorm(torch.nn.Module):
+class _RMSNorm(torch.nn.Module):
     """A custom PyTorch module for RMS normalization."""
 
     def __init__(self, normalized_shape, eps=1e-5):
@@ -60,4 +69,12 @@ class RMSNorm(torch.nn.Module):
         init.ones_(self.weight)
 
     def extra_repr(self):
-        return "{normalized_shape}, eps={eps}, ".format(**self.__dict__)
+        return f"{self.normalized_shape}, eps={self.eps}, "
+
+
+# TODO: 实现更统一的形式
+RMSNorm = (
+    DeepLinkRMSNormWithNormalizedShape
+    if internlm_accelerator.get_accelerator_backend() == AcceleratorType.DIPU and deeplink_rmsnorm_impl
+    else _RMSNorm
+)

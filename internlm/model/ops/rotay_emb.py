@@ -9,15 +9,23 @@ This file implements support for the roatry embedding operators.
 import torch
 from einops import rearrange
 
+from internlm.accelerator import AcceleratorType, get_accelerator
 from internlm.core.context import global_context as gpc
 
 try:
     from rotary_emb import apply_rotary as _flash_apply_rotary_func
 
-    flash_attn_impl = True
+    flash_rotary_impl = True
 except (ModuleNotFoundError, ImportError):
-    flash_attn_impl = False
+    flash_rotary_impl = False
 
+try:
+    from deeplink_ext.internlm_ops.rotary.deeplink import DeeplinkApplyRotaryEmb
+    deeplink_rotary_impl = True
+except (ModuleNotFoundError, ImportError):
+    deeplink_rotary_impl = False
+
+internlm_accelerator = get_accelerator()
 
 def _torch_apply_rotary_func(
     x1: torch.Tensor,
@@ -55,7 +63,7 @@ def _select_apply_rotary_func(
     out2: torch.Tensor,
     conj: bool = False,
 ):
-    if gpc.config.model.get("use_flash_attn", False) and flash_attn_impl:
+    if gpc.config.get("use_cuda_flash_attn", False) and flash_rotary_impl:
         _flash_apply_rotary_func(x1, x2, cos, sin, out1, out2, conj)
     else:
         _torch_apply_rotary_func(x1, x2, cos, sin, out1, out2, conj)
@@ -140,4 +148,9 @@ class ApplyRotaryEmb(torch.autograd.Function):
 def apply_rotary_emb(
     x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor, interleaved: bool = False, in_place: bool = False
 ):
-    return ApplyRotaryEmb.apply(x, cos, sin, interleaved, in_place)
+    # TODO: 更加统一的支持 deeplink
+    if internlm_accelerator.get_accelerator_backend() == AcceleratorType.DIPU:
+        # TODO: to support in_place argument
+        return DeeplinkApplyRotaryEmb.apply(x, cos, sin, interleaved)
+    else:
+        return ApplyRotaryEmb.apply(x, cos, sin, interleaved, in_place)
