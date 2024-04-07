@@ -347,11 +347,11 @@ def args_sanity_check():
         if "moe_type" not in model:
             model._add_item("moe_type", "GShard")
         # check dependency
-        if gpc.config.model.moe_type == "MegaBlock":
-            check_megablock_installed()
-        if gpc.config.model.moe_type == "MegaBlock-D":
-            check_megablock_installed()
-            check_stk_installed()
+        # if gpc.config.model.moe_type == "MegaBlock":
+        #     check_megablock_installed()
+        # if gpc.config.model.moe_type == "MegaBlock-D":
+        #     check_megablock_installed()
+        #     check_stk_installed()
 
     if "mlp_layer_fusion" not in model:
         model._add_item("mlp_layer_fusion", False)

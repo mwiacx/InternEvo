@@ -1,14 +1,26 @@
-from typing import Callable, Optional
+from typing import Optional
 
 import torch
 
-import internlm.moe  # noqa # pylint: disable=W0611
 from internlm.core.context import global_context as gpc
 from internlm.model.modules.mlp import new_fead_forward
+from internlm.model.moe.gshard_layer import GShardMOELayer
+from internlm.model.moe.megablock import MegaBlockdMoE, MegaBlockMoE
 from internlm.utils.logger import get_logger
 
 # global llm logger
 logger = get_logger(__file__)
+
+
+def new_moe_layer(moe_type: str, **kwargs):
+    if moe_type == "GShard":
+        return GShardMOELayer(**kwargs)
+    elif moe_type == "MegaBlock":
+        return MegaBlockMoE(**kwargs)
+    elif moe_type == "MegaBlock-D":
+        return MegaBlockdMoE(**kwargs)
+    else:
+        raise ValueError(f"Unsupported model type: {moe_type}")
 
 
 class MoE(torch.nn.Module):
@@ -52,18 +64,18 @@ class MoE(torch.nn.Module):
         if not hasattr(gpc.config, "moe"):
             gpc.config.moe = dict()
 
-        # FIXME: moe内部不应该用全局的model initializer，否则包依赖关系会非常混乱
-        # self.moe_layer = create_model(
-        #     model_type=gpc.config.model.moe_type,
-        #     hidden_size=hidden_size,
-        #     num_experts=num_experts,
-        #     ep_group=ep_group,
-        #     ep_size=ep_size,
-        #     device=device,
-        #     dtype=dtype,
-        #     **(gpc.config.moe)
-        # )
-        self.moe_layer = None
+        self.moe_layer = new_moe_layer(
+            moe_type=gpc.config.model.moe_type,
+            in_features=in_features,
+            hidden_features=hidden_features,
+            out_features=out_features,
+            num_experts=num_experts,
+            ep_group=ep_group,
+            ep_size=ep_size,
+            device=device,
+            dtype=dtype,
+            **(gpc.config.moe)
+        )
 
         # residual network, see https://arxiv.org/pdf/2201.05596.pdf, seems useful for convergence
         self.use_residual = use_residual

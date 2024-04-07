@@ -138,6 +138,7 @@ class PackedFlashBaseLayer1D(nn.Module):
                 device=device,
                 dtype=dtype,
             )
+            # TODO: remove from model package.
             set_fp32_attr_to_module(self.mlp.moe_layer.gate)
 
         self.use_swiglu = use_swiglu
