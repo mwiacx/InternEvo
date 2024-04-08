@@ -13,10 +13,6 @@ from internlm.accelerator import AcceleratorType, get_accelerator
 from internlm.core.context import Config
 from internlm.core.context import global_context as gpc
 from internlm.core.context.process_group_initializer import ParallelMode
-from internlm.model.moe.megablock.utils import (
-    check_megablock_installed,
-    check_stk_installed,
-)
 from internlm.monitor import initialize_light_monitor
 from internlm.utils.common import get_master_node
 from internlm.utils.gputest import warmup_process_group

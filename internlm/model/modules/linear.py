@@ -269,28 +269,20 @@ def fused_dense_func(
     bias: Optional[torch.Tensor] = None,
     return_residual: bool = False,
 ):
-    if gpc.config.parallel.tensor.mode == "isp":
+    if isinstance(communicator, TPCommunicator):
+        return FusedDenseFunc.apply(
+            x,
+            weight,
+            bias,
+            communicator,
+            return_residual,
+        )
+    else:
         return ISPFusedDenseFunc.apply(
             x,
             weight,
             bias,
             module,
-            communicator,
-            return_residual,
-        )
-    elif gpc.config.parallel.tensor.mode in ("mtp", "msp"):
-        return FusedDenseFunc.apply(
-            x,
-            weight,
-            bias,
-            communicator,
-            return_residual,
-        )
-    else:  # fsp
-        return FusedDenseFunc.apply(
-            x,
-            weight,
-            bias,
             communicator,
             return_residual,
         )

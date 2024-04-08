@@ -579,22 +579,16 @@ class QKVPackedMHA(nn.Module):
         # output projection always have the bias (for now)
         self.out_proj = new_linear("out_proj", embed_dim, embed_dim, bias=True, **factory_kwargs)
 
-    def forward(self, x, seqlen=None, inference_params=None, **kwargs):
+    def forward(self, x, inference_params=None, **kwargs):
         if inference_params is not None:
             return self._inference(x=x, inference_params=inference_params, **kwargs)
         else:
-            return self._training(x=x, seqlen=seqlen, inference_params=inference_params, **kwargs)
+            return self._training(x=x, **kwargs)
 
     def _inference(self, x, inference_params, **kwargs):
         assert False, "NYI"
 
     def _training(self, x, **kwargs):  # pylint: disable=W0613
-        # TODO: check it.
-        _seqlen = kwargs.pop("seqlen", None)
-        assert _seqlen is None, "seqlen is not None"
-        _inference_params = kwargs.pop("inference_params", None)
-        assert _inference_params is None, "inference_params is not None"
-
         qkv = self.Wqkv(x)
         qkv = rearrange(qkv, "b s (three h d) -> b s three h d", three=3, d=self.head_dim)
 
@@ -603,26 +597,13 @@ class QKVPackedMHA(nn.Module):
 
         indexes = kwargs.pop("indexes", 0)
         indexes = 0 if indexes is None else indexes
-        self.rotary_emb(q, offsets=indexes, cache_type="query", in_place=True)
-        self.rotary_emb(k, offsets=indexes, cache_type="key", in_place=True)
-        # if gpc.config.model.dtype is torch.float32 and gpc.config.model.use_cuda_flash_attn:
-        #     with internlm_accelerator.amp.autocast(dtype=torch.bfloat16):
-        #         if qkv.dtype not in [torch.float16, torch.bfloat16]:
-        #             qkv = qkv.to(torch.bfloat16)
-        #         context = self.inner_attn(qkv).to(x.dtype)
-        # else:
+        max_seqlen = kwargs.get("max_seqlen", None)
+
+        self.rotary_emb(q, offsets=indexes, cache_type="query", max_seqlen=max_seqlen, in_place=True)
+        self.rotary_emb(k, offsets=indexes, cache_type="key", max_seqlen=max_seqlen, in_place=True)
+
         context = self.inner_attn(qkv, **kwargs)
 
-        # else:
-        #     # TODO
-        #     pass
-
-        # 我们似乎没有需求对seqlen进行处理，根据注释他与sequence parallel有关
-        # sq也不应该在这里处理
-        # if seqlen is None:
-        # context = rearrange(context, "b s h d -> b s (h d)")
-        # else:
-        # context = rearrange(context, "b s h d -> (b s) (h d)")
         context = rearrange(context, "b s h d -> b s (h d)")
 
         out = self.out_proj(context)
@@ -737,12 +718,6 @@ class QKVSplitedGQA(nn.Module):
         else:
             return self._training(x=x, **kwargs)
 
-    # def forward(self, x, seqlen=None, inference_params=None, **kwargs):
-    #     if kwargs.get("indexes", None) is not None:
-    #         return self._packed_forward(x=x, inference_params=inference_params, **kwargs)
-    #     else:
-    #         return self._forward(x=x, seqlen=seqlen, inference_params=inference_params, **kwargs)
-
     def _inference(self, x, inference_params, **kwargs):
         assert False, "NYI"
 
@@ -754,12 +729,6 @@ class QKVSplitedGQA(nn.Module):
                 split x during sequence parallel, we split the batch * seqlen dimension
                 (in case batch is small).
         """
-        # TODO: check it.
-        _seqlen = kwargs.pop("seqlen", None)
-        assert _seqlen is None, "seqlen is not None"
-        _inference_params = kwargs.pop("inference_params", None)
-        assert _inference_params is None, "inference_params is not None"
-
         q, k, v = self.wq(x), self.wk(x), self.wv(x)
 
         q = rearrange(q, "b s (h d) -> b s h d", d=self.head_dim)
@@ -769,15 +738,25 @@ class QKVSplitedGQA(nn.Module):
         if self.rotary_emb_dim > 0:
             indexes = kwargs.pop("indexes", 0)
             indexes = 0 if indexes is None else indexes
+            max_seqlen_q = kwargs.get("max_seqlen_q", None)
+            max_seqlen_k = kwargs.get("max_seqlen_k", None)
 
             if not self.rot_embed_HF_impl:
                 q = torch.cat([q[..., ::2], q[..., 1::2]], dim=-1)
                 k = torch.cat([k[..., ::2], k[..., 1::2]], dim=-1)
 
-            q = self.rotary_emb(q, offsets=indexes, cache_type="query")
-            k = self.rotary_emb(k, offsets=indexes, cache_type="key")
+            q = self.rotary_emb(q, offsets=indexes, max_seqlen=max_seqlen_q, cache_type="query")
+            k = self.rotary_emb(k, offsets=indexes, max_seqlen=max_seqlen_k, cache_type="key")
 
         kv = torch.concat([k.unsqueeze(2), v.unsqueeze(2)], dim=2)  # data-pack data-unpack统一
+
+        cu_seqlens = kwargs.pop("cu_seqlens", None)
+        max_seqlen = kwargs.pop("max_seqlen", None)
+        if cu_seqlens is not None:
+            kwargs["cu_seqlens_q"] = cu_seqlens
+            kwargs["cu_seqlens_k"] = cu_seqlens
+            kwargs["max_seqlen_q"] = max_seqlen
+            kwargs["max_seqlen_k"] = max_seqlen
 
         context = self.inner_attn(q, kv, **kwargs)
         context = rearrange(context, "b s h d -> b s (h d)")
@@ -882,16 +861,6 @@ class QKVPackedGQA(nn.Module):
         else:
             return self._training(x=x, **kwargs)
 
-    # def forward(self, x, seqlen=None, inference_params=None, **kwargs):
-    #     if kwargs.get("indexes", None) is not None:
-    #         return self._packed_forward(
-    #             x=x, inference_params=inference_params, **kwargs
-    #         )
-    #     else:
-    #         return self._forward(
-    #             x=x, seqlen=seqlen, inference_params=inference_params, **kwargs
-    #         )
-
     def _inference(self, x, inference_params, **kwargs):
         assert False, "NYI"
 
@@ -903,12 +872,6 @@ class QKVPackedGQA(nn.Module):
                 split x during sequence parallel, we split the batch * seqlen dimension
                 (in case batch is small).
         """
-        # TODO: check it.
-        _seqlen = kwargs.pop("seqlen", None)
-        assert _seqlen is None, "seqlen is not None"
-        _inference_params = kwargs.pop("inference_params", None)
-        assert _inference_params is None, "inference_params is not None"
-
         qkv = self.wqkv(x)
 
         qkv = rearrange(qkv, "b s (h gs d) -> b s h gs d", gs=self.q_per_kv + 2, d=self.head_dim)
@@ -920,15 +883,25 @@ class QKVPackedGQA(nn.Module):
         if self.rotary_emb_dim > 0:
             indexes = kwargs.pop("indexes", 0)
             indexes = 0 if indexes is None else indexes
+            max_seqlen_q = kwargs.get("max_seqlen_q", None)
+            max_seqlen_k = kwargs.get("max_seqlen_k", None)
 
             if not self.rot_embed_HF_impl:
                 q = torch.cat([q[..., ::2], q[..., 1::2]], dim=-1)
                 k = torch.cat([k[..., ::2], k[..., 1::2]], dim=-1)
 
-            q = self.rotary_emb(q, offsets=indexes, cache_type="query")
-            k = self.rotary_emb(k, offsets=indexes, cache_type="key")
+            q = self.rotary_emb(q, offsets=indexes, max_seqlen=max_seqlen_q, cache_type="query")
+            k = self.rotary_emb(k, offsets=indexes, max_seqlen=max_seqlen_k, cache_type="key")
 
         kv = torch.concat([k.unsqueeze(2), v.unsqueeze(2)], dim=2)
+
+        cu_seqlens = kwargs.pop("cu_seqlens", None)
+        max_seqlen = kwargs.pop("max_seqlen", None)
+        if cu_seqlens is not None:
+            kwargs["cu_seqlens_q"] = cu_seqlens
+            kwargs["cu_seqlens_k"] = cu_seqlens
+            kwargs["max_seqlen_q"] = max_seqlen
+            kwargs["max_seqlen_k"] = max_seqlen
 
         context = self.inner_attn(q, kv, **kwargs)
 

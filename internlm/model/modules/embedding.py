@@ -101,14 +101,19 @@ class RotaryEmbedding(torch.nn.Module):
         self._cos_k_cached = None
         self._sin_k_cached = None
 
-    def _update_cos_sin_cache(self, x: torch.Tensor, indexes: Union[int, torch.Tensor] = 0):
+    def _update_cos_sin_cache(
+        self, x: torch.Tensor, indexes: Union[int, torch.Tensor] = 0, max_seqlen: Optional[int] = None
+    ):
         """x: (batch, seqlen, nheads, headdim) or (batch, seqlen, 3, nheads, headdim)"""
-        if isinstance(indexes, int):
+        if max_seqlen is not None:
+            seqlen = max_seqlen
+        elif isinstance(indexes, int):
             seqlen = indexes + x.shape[1] + 1
         else:
-            # seqlen = indexes.max().item() + 1  # 移除item的调用，这可能会造成cpu和gpu的同步
-            # FIXME: todo
-            seqlen = gpc.config.SEQ_LEN
+            # Note that this statement may cause synchronization between CPU and GPU,
+            # so it's best to precompute and pass in max_seqlen ahead of time
+            seqlen = indexes.max().item() + 1
+
         # Reset the tables if the sequence length has changed,
         # or if we're on a new device (possibly due to tracing for instance)
         if seqlen > self._seq_len_cached or self._cos_cached.device != x.device or self._cos_cached.dtype != x.dtype:
@@ -161,6 +166,7 @@ class RotaryEmbedding(torch.nn.Module):
         self,
         x: torch.Tensor,
         offsets: Union[int, torch.Tensor] = 0,
+        max_seqlen: Optional[int] = None,
         cache_type: str = "query",  # 有没有可能优化一下？
         interleaved: bool = False,  # TODO: 标准化模型设置 interleaved
         in_place: bool = False,
@@ -174,7 +180,7 @@ class RotaryEmbedding(torch.nn.Module):
             empties = left_padding_mask[..., -1].sum(dim=-1)
             x = self._covert_padding(x, empties, covert_type="left2right", in_place=in_place)
 
-        self._update_cos_sin_cache(x, offsets)
+        self._update_cos_sin_cache(x, offsets, max_seqlen)
 
         cos_cached = self._cos_k_cached if cache_type == "key" and self.scale is not None else self._cos_cached
         sin_cached = self._sin_k_cached if cache_type == "key" and self.scale is not None else self._sin_cached

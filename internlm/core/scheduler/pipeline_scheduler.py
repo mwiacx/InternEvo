@@ -9,11 +9,11 @@ from typing import Callable, List, Optional, Tuple, Union
 import torch
 import torch.distributed as dist
 
-from internlm.core.scheduler import comm
 from internlm.core.context import ParallelMode
 from internlm.core.context import global_context as gpc
 from internlm.core.engine import Engine
 from internlm.core.naive_amp import NaiveAMPModel
+from internlm.core.scheduler import comm
 from internlm.utils.common import (
     SchedulerHook,
     check_data_is_packed,
@@ -220,16 +220,9 @@ class PipelineScheduler(BaseScheduler):
         micro_batch_data, micro_batch_label = self._load_micro_batch(
             data=self.batch_data, label=self.batch_label, offset=self.microbatch_offset, bsz_stride=self.bsz_stride
         )
-        if self.data_process_func:
-            micro_batch_data["input_ids"] = self.data_process_func(
-                micro_batch_data["input_ids"], micro_batch_data["cu_seqlens"]
-            )
-            micro_batch_label = self.data_process_func(
-                micro_batch_label, micro_batch_data["cu_seqlens"], padding_v=-100
-            )
 
-            micro_batch_data.pop("cu_seqlens")
-            micro_batch_data.pop("indexes")
+        if self.data_process_func:
+            micro_batch_data, micro_batch_label = self.data_process_func(micro_batch_data, micro_batch_label)
 
         micro_batch_data["label"] = micro_batch_label
         self.microbatch_offset += self.bsz_stride

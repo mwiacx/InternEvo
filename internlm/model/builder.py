@@ -13,8 +13,8 @@ def create_model(model_type, *args, **kwargs) -> Union[nn.Module, List[nn.Module
     # TODO: rewrite the function
     num_layers = kwargs.get("num_layers")
     num_chunks = kwargs.pop("num_chunks", 1)
-    # TODO: fix use_cuda_flash_attn parameter config
-    kwargs.pop("use_cuda_flash_attn")
+    # TODO: fix use_flash_attn parameter config
+    kwargs.pop("use_flash_attn", False)
     kwargs.pop("apply_post_layer_norm")
 
     kwargs["checkpoint"] = float(kwargs.get("checkpoint", False))

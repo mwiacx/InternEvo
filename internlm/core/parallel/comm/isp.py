@@ -659,13 +659,13 @@ class DistributedAttention(nn.Module):
         """
         # qkv shape: [1, packlen, 3, n_head, head_dim] or [batch, seqlen, 3, n_head, head_dim]
         # scatter in n_head and gather in seqlen(packlen)
-        qkv = _SeqAllToAll.apply(self.spg, qkv, scatter_idx=3, gather_idx=1)
+        qkv = _SeqAllToAll.apply(self.spg, qkv, 3, 1)
 
         context = self.local_attn(qkv, **kwargs)
 
         # context shape: [1, packlen, n_head, head_dim] or [batch, seqlen, n_head, head_dim]
         # scatter in seqlen(packlen) and gather in n_head
-        context = _SeqAllToAll.apply(self.spg, context, scatter_idx=1, gather_idx=2)
+        context = _SeqAllToAll.apply(self.spg, context, 1, 2)
 
         return context
 
@@ -684,10 +684,10 @@ class DistributedAttention(nn.Module):
         """
         # q shpae: [1, packlen, n_head, head_dim] or [batch, seqlen, n_head, head_dim]
         # scatter in n_head and gather in seqlen(packlen)
-        q = _SeqAllToAll.apply(self.spg, q, scatter_idx=2, gather_idx=1)
+        q = _SeqAllToAll.apply(self.spg, q, 2, 1)
         # kv shape: [1, packlen, 2, n_head, head_dim] or [batch, seqlen, 2, n_head, head_dim]
         # scatter in n_head and gather in seqlen(packlen)
-        kv = _SeqAllToAll.apply(self.spg, kv, scatter_idx=3, gather_idx=1)
+        kv = _SeqAllToAll.apply(self.spg, kv, 3, 1)
 
         context = self.local_attn(q, kv, **kwargs)
 
@@ -714,19 +714,19 @@ class DistributedAttention(nn.Module):
         # self._scatter_gather_idx["q"] = [1, 0]  # q/k/v shape: [sequence, head, head_dim]
         # q shpae: [1, packlen, n_head, head_dim] or [batch, seqlen, n_head, head_dim]
         # scatter in n_head and gather in seqlen(packlen)
-        q = _SeqAllToAll.apply(self.spg, q, scatter_idx=2, gather_idx=1)
+        q = _SeqAllToAll.apply(self.spg, q, 2, 1)
         # k shpae: [1, packlen, n_head, head_dim] or [batch, seqlen, n_head, head_dim]
         # scatter in n_head and gather in seqlen(packlen)
-        k = _SeqAllToAll.apply(self.spg, k, scatter_idx=2, gather_idx=1)
+        k = _SeqAllToAll.apply(self.spg, k, 2, 1)
         # v shpae: [1, packlen, n_head, head_dim] or [batch, seqlen, n_head, head_dim]
         # scatter in n_head and gather in seqlen(packlen)
-        v = _SeqAllToAll.apply(self.spg, v, scatter_idx=2, gather_idx=1)
+        v = _SeqAllToAll.apply(self.spg, v, 2, 1)
 
         context = self.local_attn(q, k, v, **kwargs)
 
         # context shape: [1, packlen, n_head, head_dim] or [batch, seqlen, n_head, head_dim]
         # scatter in seqlen(packlen) and gather in n_head
-        context = _SeqAllToAll.apply(self.spg, context, scatter_idx=1, gather_idx=2)
+        context = _SeqAllToAll.apply(self.spg, context, 1, 2)
 
         return context
 

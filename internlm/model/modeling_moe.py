@@ -174,15 +174,14 @@ class PackedFlashBaseLayer1D(nn.Module):
                     else:
                         normal_(std=0.006 if "fc1" in name else 0.0015)(param.data)
 
-    def forward(self, hidden_states, cu_seqlens=None, indexes=None, inference_params=None, max_seqlen=None):
+    def forward(self, hidden_states, **kwargs):
         if self.checkpoint and self.training:
-            return activation_checkpoint(
-                self._forward, False, hidden_states, cu_seqlens, indexes, inference_params, max_seqlen
-            )  # TODO: check whether this will be affected by moe
+            # TODO: check whether this will be affected by moe
+            return activation_checkpoint(self._forward, False, hidden_states, **kwargs)
         else:
-            return self._forward(hidden_states, cu_seqlens, indexes, inference_params, max_seqlen)
+            return self._forward(hidden_states, **kwargs)
 
-    def _forward(self, hidden_states=None, cu_seqlens=None, indexes=None, inference_params=None, max_seqlen=None):
+    def _forward(self, hidden_states=None, **kwargs):
         r"""Pass the input through the encoder layer.
 
         Args:
@@ -191,13 +190,6 @@ class PackedFlashBaseLayer1D(nn.Module):
             cu_seqlens: 1d LongTensor, len(cu_seqlens) = hidden_states + 1
             indexes: the length of index is same as hidden states, which stand for the current position
         """
-        mixer_kwargs = {
-            "cu_seqlens": cu_seqlens,
-            "max_seqlen": max_seqlen,
-            "indexes": indexes,
-            "inference_params": inference_params,
-        }
-
         def _dropout_and_norm_attn(_hidden_states):
             _dropped = self.dropout1(_hidden_states)
             _residual = _dropped
@@ -212,7 +204,7 @@ class PackedFlashBaseLayer1D(nn.Module):
         if self.residual_in_fp32:
             residual = residual.to(torch.float32)
 
-        hidden_states = self.mixer(hidden_states, **mixer_kwargs)
+        hidden_states = self.mixer(hidden_states, **kwargs)
 
         def _dropout_and_norm_ffn(_residual, _hidden_states):
             _dropped = self.dropout2(_hidden_states)
@@ -374,7 +366,7 @@ class PackedFlashInternLm1D(nn.Module):
 
         self.parallel_output = parallel_output
 
-    def forward(self, hidden_states=None, cu_seqlens=None, input_ids=None, indexes=None, inference_params=None):
+    def forward(self, hidden_states=None, input_ids=None, **kwargs):
         # attention_mask: compute attention on the places where the value is 1
         # old condition may fail when use shared embedding
         if gpc.is_pipeline_first_stage():
@@ -383,33 +375,10 @@ class PackedFlashInternLm1D(nn.Module):
                 hidden_states = (
                     self.embed_grad_scale * hidden_states + (1 - self.embed_grad_scale) * hidden_states.detach()
                 )
-        if isinstance(cu_seqlens, list):
-            assert len(cu_seqlens) == 1
-            cu_seqlens = cu_seqlens[0].to(hidden_states.device)
-
-        if cu_seqlens is not None:
-            cu_seqlens = cu_seqlens.squeeze(0)
-
-        if indexes is not None:
-            assert len(indexes) == 1
-            # The indexes are used to indicate the actual position IDs of each token in the packed input.
-            indexes = indexes[0]
-            # if the sequence parallel mode is 'isp', the indexes should also be split in sequence dimension.
-            # TODO：从模型中移除
-            if gpc.config.parallel.sequence_parallel and self.tp_mode == "isp":
-                indexes = split_forward_gather_backward(indexes, ParallelMode.TENSOR, dim=0)
-
-        max_seqlen = (cu_seqlens[1:] - cu_seqlens[:-1]).max().item() if cu_seqlens is not None else None
 
         moe_losses = []
         for _, block in enumerate(self.blocks):
-            hidden_states, mos_loss = block(
-                hidden_states,
-                cu_seqlens=cu_seqlens,
-                indexes=indexes,
-                inference_params=inference_params,
-                max_seqlen=max_seqlen,
-            )
+            hidden_states, mos_loss = block(hidden_states, **kwargs)
             moe_losses.append(mos_loss)
 
         if hasattr(self, "norm"):

@@ -108,15 +108,10 @@ def _flash_varlen_qkvpacked_attn(
 
 
 def _flash_fixedlen_qkvpacked_attn(qkv: torch.Tensor, dropout_p=0.0, softmax_scale=None, causal=False):
-    # compatible data format: [1, packelen, 3, n_head, headim]
-    qkv = qkv.squeeze(dim=0)
-
     # input_idxs: 0: qkv
-    output = _flash_float32_compatibility_wrapper(
+    return _flash_float32_compatibility_wrapper(
         (0), _flash_fixedlen_qkvpacked_func, qkv, dropout_p, softmax_scale, causal
     )
-
-    return output.unsqueeze(dim=0)
 
 
 def _flash_varlen_kvpacked_attn(
@@ -152,15 +147,10 @@ def _flash_varlen_kvpacked_attn(
 
 
 def _flash_fixedlen_kvpacked_attn(q: torch.Tensor, kv: torch.Tensor, dropout_p=0.0, softmax_scale=None, causal=False):
-    # compatible data format: [1, packelen, 3, n_head, headim]
-    q, kv = q.squeeze(dim=0), kv.squeeze(dim=0)
-
     # input_idxs: 0: q, 1: kv
-    output = _flash_float32_compatibility_wrapper(
+    return _flash_float32_compatibility_wrapper(
         (0, 1), _flash_fixedlen_kvpacked_func, q, kv, dropout_p, softmax_scale, causal
     )
-
-    return output.unsqueeze(dim=0)
 
 
 def _flash_varlen_qkvsplited_attn(
@@ -177,6 +167,8 @@ def _flash_varlen_qkvsplited_attn(
 ):
     # compatible data format: [1, packelen, 3, n_head, headim]
     q, k, v = q.squeeze(dim=0), k.squeeze(dim=0), v.squeeze(dim=0)
+    # cu_seqlens_q = cu_seqlens_q[0].to(q.device).squeeze(dim=0)
+    # cu_seqlens_k = cu_seqlens_k[0].to(q.device).squeeze(dim=0)
 
     # input_idxs: 0: q, 1: k, 2: v
     output = _flash_float32_compatibility_wrapper(
@@ -198,15 +190,10 @@ def _flash_varlen_qkvsplited_attn(
 
 
 def _flash_fixedlen_qkvsplited_attn(q, k, v, dropout_p=0.0, softmax_scale=None, causal=False):
-    # compatible data format: [1, packelen, 3, n_head, headim]
-    q, k, v = q.squeeze(dim=0), k.squeeze(dim=0), v.squeeze(dim=0)
-
     # input_idxs: 0: q, 1: k, 2: v
-    output = _flash_float32_compatibility_wrapper(
+    return _flash_float32_compatibility_wrapper(
         (0, 1, 2), _flash_fixedlen_qkvsplited_func, q, k, v, dropout_p, softmax_scale, causal
     )
-
-    return output.unsqueeze(dim=0)
 
 
 # npu flash attention operators

@@ -54,14 +54,14 @@ def check_attention_argument(*args, **kwargs) -> str:
             return "qkv" in kwargs
         else:
             # qkv: [batch, seqlen, 3, n_head, headdim]
-            return len(args[1].shape) == 4  # TODO: chager to 5 after merge
+            return len(args[1].shape) == 5
 
     def __kv_checker(num_args: int):
         if num_args < 3:
             return "kv" in kwargs
         else:
             # kv: [batch, seqlen, 3, n_head, headdim]
-            return len(args[2].shape) == 4  # TODO: chager to 5 after merge
+            return len(args[2].shape) == 5
 
     def __cu_seqlens_checker(num_args: int, check_idx: int):
         if num_args < (check_idx + 1):
@@ -117,6 +117,22 @@ def params_dispatch_with_condition(condition: Callable, func: Callable = None):
             raise TypeError(f"{funcname} requires at least " "1 positional argument")
 
         _type = "-".join(condition(*args, **kwargs))
+
+        # def _print_helper(*args, **kwargs):
+        #     ret = "args: "
+        #     for v in args:
+        #         if isinstance(v, torch.Tensor):
+        #             ret += f"{str(v.shape)}, "
+        #         else:
+        #             ret += f"{v}, "
+        #     ret += "kwargs: "
+        #     for k, v in kwargs.items():
+        #         if isinstance(v, torch.Tensor):
+        #             ret += f"k<{k}>: {str(v.shape)},"
+        #         else:
+        #             ret += f"k<{k}>: {v},"
+        #     return ret
+        # print(f"_type: {_type}, {_print_helper(*args, **kwargs)}")
 
         return dispatch(_type)(*args, **kwargs)
 

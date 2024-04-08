@@ -3,7 +3,6 @@ from typing import Optional
 import numpy as np
 import torch
 import torch.nn.functional as F
-from megablocks import ops
 
 from internlm.core.context import ParallelMode
 from internlm.core.context import global_context as gpc
@@ -11,6 +10,10 @@ from internlm.model.moe.base_layer import BaseMoELayer
 from internlm.model.moe.megablock.mlp import MegaBlockFeedForward
 from internlm.model.moe.utils import all_to_all
 
+try:
+    from megablocks import ops
+except (ModuleNotFoundError, ImportError):
+    print("TODO: import stk, megablocks error")
 
 class MegaBlockMoE(BaseMoELayer):
     """

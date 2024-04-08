@@ -5,7 +5,8 @@ import torch
 from internlm.core.context import global_context as gpc
 from internlm.model.modules.mlp import new_fead_forward
 from internlm.model.moe.gshard_layer import GShardMOELayer
-from internlm.model.moe.megablock import MegaBlockdMoE, MegaBlockMoE
+from internlm.model.moe.megablock.megablock_dmoe import MegaBlockdMoE
+from internlm.model.moe.megablock.megablock_moe import MegaBlockMoE
 from internlm.utils.logger import get_logger
 
 # global llm logger

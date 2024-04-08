@@ -41,7 +41,7 @@ from internlm.core.parallel.comm.tensor import (
 )
 from internlm.core.parallel.comm.zero import ParamAsyncBcastHandler
 from internlm.core.trainer import TrainState
-from internlm.data.utils import unpack_data
+from internlm.data.utils import unpack_type_ids
 from internlm.model.builder import create_model
 from internlm.model.metrics import SchedulerMetricHook
 from internlm.model.modules.embedding import Embedding1D
@@ -273,6 +273,8 @@ def initialize_parallel_communicator(model: Union[nn.Module, nn.ModuleList]):
         An isp communicator for managing comp/comm overlap and memory pool.
     """
     isp_communicator = None
+    _retain_out_sharded = gpc.config.model.get("parallel_output", True)
+
     if is_using_isp():
         isp_communicator = ISPCommunicator(
             model,
@@ -289,9 +291,10 @@ def initialize_parallel_communicator(model: Union[nn.Module, nn.ModuleList]):
         ColumnParallelLinear.register_communicator(isp_communicator)
         # row parallel linear will not be used.
         RowParallelLinear.register_communicator(None)
+        _head_comminucator = HeadTensorParallelCommunicator(ParallelMode.TENSOR, _retain_out_sharded)
 
     # register communictor for mtp/msp/fsp linear.
-    _retain_out_sharded = gpc.config.model.get("parallel_output", True)
+
     # tensor parallel
     if gpc.config.parallel.tensor.mode == "mtp":
         ColumnParallelLinear.register_communicator(
@@ -461,7 +464,7 @@ def load_new_batch(train_dl: DataLoader, train_iter: Iterable, train_state: Trai
     if batch[0].get("type_ids", None) is not None:
         # if use_packed_dataset is False, we need to unpack type_ids
         if not gpc.config.data.use_packed_dataset:
-            batch[0]["type_ids"] = unpack_data(batch[0]["type_ids"], batch[0]["cu_seqlens"], is_type_ids=True)
+            batch[0]["type_ids"] = unpack_type_ids(batch[0]["type_ids"], batch[0]["cu_seqlens"])
 
     return batch, train_iter
 
