@@ -15,7 +15,7 @@ from internlm.initialize.initialize_tensor import (
 )
 from internlm.model.modules.embedding import Embedding1D
 from internlm.model.modules.linear import new_linear
-from internlm.model.modules.mha import QKVSplitedGQA
+from internlm.model.modules.mha import GQA
 from internlm.model.modules.mlp import new_fead_forward
 from internlm.model.modules.norm import new_layer_norm
 from internlm.solver.activation_checkpoint import activation_checkpoint
@@ -41,7 +41,6 @@ class PackedFlashLlamaLayer1D(nn.Module):
         residual_in_fp32 (bool): Whether to use residual in fp32. False by default.
         device (Optional[Union[str, torch.device]]): The device will be used.
         norm_type (str): Use RMS norm or layernorm."rmsnorm" by default.
-        use_cuda_flash_attn (bool): Whether use flash-attn. True by default.
         attn_wqkv_init_std (float): std used to init attn_wqkv weight. 0.02 by default,
         attn_other_init_std (float): std used to init attn_other weight. 0.02 by default,
         ffn_uplayer_init_std (float): std used to init w1, w2 weight in ffn when using glu
@@ -75,7 +74,6 @@ class PackedFlashLlamaLayer1D(nn.Module):
         dropout_selective_checkpoint: bool = True,
         use_scaled_init: bool = True,
         use_swiglu: bool = True,
-        # use_cuda_flash_attn: bool = True,
         attn_wqkv_init_std: float = 0.02,
         attn_other_init_std: float = 0.02,
         ffn_uplayer_init_std: float = 0.02,
@@ -90,7 +88,6 @@ class PackedFlashLlamaLayer1D(nn.Module):
         # dropout selective checkpoint can only be enabled when checkpoint is disabled.
         self.dropout_selective_checkpoint = dropout_selective_checkpoint is True and checkpoint is False
         self.layer_idx = layer_idx
-        # self.use_cuda_flash_attn = use_cuda_flash_attn
         self.prenorm = not apply_post_layer_norm
         assert not fused_dropout_add_ln, "dropout_add_layer_norm can not be used here"
         self.fused_dropout_add_ln = fused_dropout_add_ln
@@ -100,28 +97,23 @@ class PackedFlashLlamaLayer1D(nn.Module):
         self.ffn_other_init_std = ffn_other_init_std
 
         head_dim = hidden_size // num_attention_heads
-        # self.tp_mode = tp_mode
-        # parallel_mode = ParallelMode.WEIGHT if self.tp_mode == "isp" else ParallelMode.TENSOR
 
-        self.attention = QKVSplitedGQA(
+        self.attention = GQA(
             embed_dim=hidden_size,
             num_heads=num_attention_heads,
             num_kv_heads=num_kv_attention_heads,
-            # process_group=gpc.get_group(parallel_mode),
-            # sequence_process_group=gpc.get_group(ParallelMode.TENSOR),
             dropout=attn_drop_rate,
             softmax_scale=1 / math.sqrt(head_dim),
             causal=True,
             layer_idx=layer_idx,
             rotary_emb_dim=head_dim,
             rotary_emb_scale_base=0,
-            # use_cuda_flash_attn=use_cuda_flash_attn,
             device=device,
             dtype=dtype,
             rot_embed_HF_impl=adapt_hf,
             bias=not no_bias,
             rope_base=rope_base,
-            # tp_mode=self.tp_mode,
+            enable_qkv_fusion=False,
         )
 
         self.dropout1 = nn.Dropout(drop_rate)
@@ -336,7 +328,6 @@ class PackedFlashLlama1D(nn.Module):
         dropout_selective_checkpoint: bool = True,
         use_scaled_init: bool = True,
         use_swiglu: bool = True,
-        # use_cuda_flash_attn: bool = True,
         embedding_init_std: float = 0.02,
         attn_wqkv_init_std: float = 0.02,
         attn_other_init_std: float = 0.02,
@@ -350,16 +341,11 @@ class PackedFlashLlama1D(nn.Module):
     ):
         super().__init__()
 
-        # self.use_cuda_flash_attn = use_cuda_flash_attn
         if checkpoint_fraction <= 0:
             checkpoint = False
         if not checkpoint:
             checkpoint_fraction = 0
         checkpoint_layer_num = num_layers * checkpoint_fraction
-        # sequence_parallel = gpc.config.parallel.get("sequence_parallel", False)
-        # self.tp_mode = "mtp"
-        # if isinstance(gpc.config.parallel["tensor"], dict):
-        #     self.tp_mode = gpc.config.parallel["tensor"].get("mode", "mtp")
 
         if first:
             # if embed_split_hidden or not gpc.config.model.use_cuda_flash_attn:
@@ -406,7 +392,6 @@ class PackedFlashLlama1D(nn.Module):
                     dropout_selective_checkpoint=dropout_selective_checkpoint,
                     use_scaled_init=use_scaled_init,
                     use_swiglu=use_swiglu,
-                    # use_cuda_flash_attn=use_cuda_flash_attn,
                     adapt_hf=adapt_hf,
                     attn_wqkv_init_std=attn_wqkv_init_std,
                     attn_other_init_std=attn_other_init_std,

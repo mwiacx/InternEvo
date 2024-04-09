@@ -2,7 +2,7 @@
 # -*- encoding: utf-8 -*-
 
 import math
-from typing import Optional
+from typing import Dict, Optional
 
 import torch
 from torch import nn
@@ -13,13 +13,23 @@ from internlm.core.naive_amp import set_output_attr_to_module
 from internlm.initialize.initialize_tensor import normal_, scaled_init_method_normal
 from internlm.model.modules.embedding import Embedding1D
 from internlm.model.modules.linear import new_linear
-from internlm.model.modules.mha import QKVPackedMHA
+from internlm.model.modules.mha import MHA
 from internlm.model.modules.mlp import new_fead_forward
 from internlm.model.modules.norm import new_layer_norm
 from internlm.solver.activation_checkpoint import activation_checkpoint
 from internlm.utils.logger import get_logger
 
 logger = get_logger(__file__)
+
+
+def _internlm1_mha_pre_load_convert(model: MHA, state_dict: Dict, *args, **kwargs) -> None:
+    if "wqkv.weight" not in state_dict:
+        assert "Wqkv.weight" in state_dict, "checkpoint is not compatible, wqkv or Wqkv weight is required."
+
+        state_dict["wqkv.weight"] = state_dict.pop("Wqkv.weight")
+
+def _internlm1_mha_save_convert(model: MHA, state_dict: Dict, *args, **kwargs) -> None:
+    state_dict["Wqkv.weight"] = state_dict.pop("wqkv.weight")
 
 
 class PackedFlashBaseLayer1D(nn.Module):
@@ -71,13 +81,10 @@ class PackedFlashBaseLayer1D(nn.Module):
         # dropout selective checkpoint can only be enabled when checkpoint is disabled.
         self.dropout_selective_checkpoint = dropout_selective_checkpoint is True and checkpoint is False
         self.layer_idx = layer_idx
-        # self.use_cuda_flash_attn = use_cuda_flash_attn
 
         head_dim = hidden_size // num_attention_heads
-        # self.tp_mode = tp_mode
-        # parallel_mode = ParallelMode.WEIGHT if self.tp_mode == "isp" else ParallelMode.TENSOR
 
-        self.mixer = QKVPackedMHA(
+        self.mixer = MHA(
             embed_dim=hidden_size,
             num_heads=num_attention_heads,
             dropout=attn_drop_rate,
@@ -92,6 +99,9 @@ class PackedFlashBaseLayer1D(nn.Module):
             device=device,
             dtype=dtype,
         )
+
+        # Compatible with the name of internlm1 Wqkv linear layer
+        self.mixer.register_checkpoint_compatibility_hooks(_internlm1_mha_pre_load_convert, _internlm1_mha_save_convert)
 
         self.dropout1 = nn.Dropout(drop_rate)
         self.dropout2 = nn.Dropout(drop_rate)
@@ -255,7 +265,6 @@ class PackedFlashInternLm1D(nn.Module):
         dropout_selective_checkpoint: bool = True,
         use_scaled_init: bool = True,
         use_swiglu: bool = True,
-        # use_cuda_flash_attn: bool = True,
         rope_base: int = 10000,
         mlp_layer_fusion: bool = False,
         multiple_of: int = 256,
@@ -263,9 +272,6 @@ class PackedFlashInternLm1D(nn.Module):
         super().__init__()
 
         checkpoint_layer_num = int(num_layers * checkpoint)
-        # # self.tp_mode = "mtp"
-        # if isinstance(gpc.config.parallel["tensor"], dict):
-        #     self.tp_mode = gpc.config.parallel["tensor"].get("mode", "mtp")
 
         if first:
             # if embed_split_hidden or not use_cuda_flash_attn:

@@ -15,7 +15,7 @@ from internlm.initialize.initialize_tensor import (
 )
 from internlm.model.modules.embedding import Embedding1D
 from internlm.model.modules.linear import new_linear
-from internlm.model.modules.mha import QKVPackedGQA
+from internlm.model.modules.mha import GQA
 from internlm.model.modules.mlp import new_fead_forward
 from internlm.model.modules.norm import new_layer_norm
 from internlm.solver.activation_checkpoint import activation_checkpoint
@@ -79,8 +79,6 @@ class PackedFlashLlamaLayer1D(nn.Module):
         dropout_selective_checkpoint: bool = True,
         use_scaled_init: bool = True,
         use_swiglu: bool = True,
-        # use_cuda_flash_attn: bool = True,
-        # tp_mode: str = "mtp",
         attn_wqkv_init_std: float = 0.02,
         attn_other_init_std: float = 0.02,
         ffn_uplayer_init_std: float = 0.02,
@@ -95,7 +93,6 @@ class PackedFlashLlamaLayer1D(nn.Module):
         # dropout selective checkpoint can only be enabled when checkpoint is disabled.
         self.dropout_selective_checkpoint = dropout_selective_checkpoint is True and checkpoint is False
         self.layer_idx = layer_idx
-        # self.use_cuda_flash_attn = use_cuda_flash_attn
         self.prenorm = not apply_post_layer_norm
         assert not fused_dropout_add_ln, "dropout_add_layer_norm can not be used here"
         self.fused_dropout_add_ln = fused_dropout_add_ln
@@ -106,11 +103,9 @@ class PackedFlashLlamaLayer1D(nn.Module):
 
         self.max_position_embeddings = max_position_embeddings
         self.use_dynamic_ntk_rope = use_dynamic_ntk_rope
-        # self.tp_mode = tp_mode
-        # parallel_mode = ParallelMode.WEIGHT if self.tp_mode == "isp" else ParallelMode.TENSOR
 
         head_dim = hidden_size // num_attention_heads
-        self.attention = QKVPackedGQA(
+        self.attention = GQA(
             embed_dim=hidden_size,
             num_heads=num_attention_heads,
             num_kv_heads=num_kv_attention_heads,
@@ -127,6 +122,7 @@ class PackedFlashLlamaLayer1D(nn.Module):
             rot_embed_HF_impl=adapt_hf,
             bias=not no_bias,
             rope_base=rope_base,
+            enable_qkv_fusion=True,
         )
 
         self.dropout1 = nn.Dropout(drop_rate)
@@ -348,7 +344,6 @@ class PackedFlashLlama1D(nn.Module):
         dropout_selective_checkpoint: bool = True,
         use_scaled_init: bool = True,
         use_swiglu: bool = True,
-        # use_cuda_flash_attn: bool = True,
         embedding_init_std: float = 0.02,
         attn_wqkv_init_std: float = 0.02,
         attn_other_init_std: float = 0.02,
@@ -363,19 +358,11 @@ class PackedFlashLlama1D(nn.Module):
     ):
         super().__init__()
 
-        # self.use_cuda_flash_attn = use_cuda_flash_attn
-
         if checkpoint_fraction <= 0:
             checkpoint = False
         if not checkpoint:
             checkpoint_fraction = 0
         checkpoint_layer_num = num_layers * checkpoint_fraction
-
-        # self.tp_mode = tp_mode
-        # if isinstance(gpc.config.parallel["tensor"], dict):
-        #     self.tp_mode = gpc.config.parallel["tensor"].get("mode", "mtp")
-
-        # sequence_parallel = gpc.config.parallel.get("sequence_parallel", False)
 
         if first:
             # if embed_split_hidden or not gpc.config.model.use_cuda_flash_attn:
@@ -425,14 +412,12 @@ class PackedFlashLlama1D(nn.Module):
                     dropout_selective_checkpoint=dropout_selective_checkpoint,
                     use_scaled_init=use_scaled_init,
                     use_swiglu=use_swiglu,
-                    # use_cuda_flash_attn=use_cuda_flash_attn,
                     adapt_hf=adapt_hf,
                     attn_wqkv_init_std=attn_wqkv_init_std,
                     attn_other_init_std=attn_other_init_std,
                     ffn_uplayer_init_std=ffn_uplayer_init_std,
                     ffn_other_init_std=ffn_other_init_std,
                     init_type=init_type,
-                    # tp_mode=self.tp_mode,
                     rope_base=rope_base,
                     mlp_layer_fusion=mlp_layer_fusion,
                     multiple_of=multiple_of,

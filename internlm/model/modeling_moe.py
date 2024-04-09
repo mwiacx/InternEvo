@@ -14,7 +14,7 @@ from internlm.core.parallel.comm.utils import split_forward_gather_backward
 from internlm.initialize.initialize_tensor import normal_, scaled_init_method_normal
 from internlm.model.modules.embedding import Embedding1D
 from internlm.model.modules.linear import new_linear
-from internlm.model.modules.mha import QKVPackedMHA
+from internlm.model.modules.mha import MHA
 from internlm.model.modules.mlp import new_fead_forward
 from internlm.model.modules.norm import new_layer_norm
 from internlm.model.moe.moe import MoE
@@ -77,16 +77,13 @@ class PackedFlashBaseLayer1D(nn.Module):
         # dropout selective checkpoint can only be enabled when checkpoint is disabled.
         self.dropout_selective_checkpoint = dropout_selective_checkpoint is True and checkpoint is False
         self.layer_idx = layer_idx
-        # self.use_cuda_flash_attn = use_cuda_flash_attn
 
         head_dim = hidden_size // num_attention_heads
-        # self.tp_mode = tp_mode
-        # parallel_mode = ParallelMode.WEIGHT if self.tp_mode == "isp" else ParallelMode.TENSOR
-        self.mixer = QKVPackedMHA(
+
+        self.mixer = MHA(
             embed_dim=hidden_size,
             num_heads=num_attention_heads,
-            # process_group=gpc.get_group(parallel_mode),
-            # sequence_process_group=gpc.get_group(ParallelMode.TENSOR),
+
             dropout=attn_drop_rate,
             max_position_embeddings=max_position_embeddings,
             softmax_scale=1 / math.sqrt(head_dim),
@@ -95,10 +92,8 @@ class PackedFlashBaseLayer1D(nn.Module):
             use_dynamic_ntk_rope=use_dynamic_ntk_rope,
             rotary_emb_dim=head_dim,
             rotary_emb_scale_base=0,
-            # use_cuda_flash_attn=use_cuda_flash_attn,
             device=device,
             dtype=dtype,
-            # tp_mode=self.tp_mode,
         )
 
         self.dropout1 = nn.Dropout(drop_rate)
@@ -290,7 +285,6 @@ class PackedFlashInternLm1D(nn.Module):
         dropout_selective_checkpoint: bool = True,
         use_scaled_init: bool = True,
         use_swiglu: bool = True,
-        # use_cuda_flash_attn: bool = True,
         num_experts: bool = 1,
         mlp_layer_fusion: bool = False,
         multiple_of: int = 256,
@@ -298,9 +292,6 @@ class PackedFlashInternLm1D(nn.Module):
         super().__init__()
 
         checkpoint_layer_num = int(num_layers * checkpoint)
-        # self.tp_mode = "mtp"
-        # if isinstance(gpc.config.parallel["tensor"], dict):
-        #     self.tp_mode = gpc.config.parallel["tensor"].get("mode", "mtp")
 
         if first:
             # if embed_split_hidden or not use_cuda_flash_attn:
@@ -341,7 +332,6 @@ class PackedFlashInternLm1D(nn.Module):
                     dropout_selective_checkpoint=dropout_selective_checkpoint,
                     use_scaled_init=use_scaled_init,
                     use_swiglu=use_swiglu,
-                    # use_cuda_flash_attn=use_cuda_flash_attn,
                     num_experts=num_experts,
                     mlp_layer_fusion=mlp_layer_fusion,
                     multiple_of=multiple_of,
