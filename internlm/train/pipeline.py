@@ -291,7 +291,7 @@ def initialize_parallel_communicator(model: Union[nn.Module, nn.ModuleList]):
         ColumnParallelLinear.register_communicator(isp_communicator)
         # row parallel linear will not be used.
         RowParallelLinear.register_communicator(None)
-        _head_comminucator = HeadTensorParallelCommunicator(ParallelMode.TENSOR, _retain_out_sharded)
+        _head_comminucator = HeadSequenceParallelCommunicator(ParallelMode.TENSOR, _retain_out_sharded)
 
     # register communictor for mtp/msp/fsp linear.
 
