@@ -46,8 +46,10 @@ from internlm.model.builder import create_model
 from internlm.model.metrics import SchedulerMetricHook
 from internlm.model.modules.embedding import Embedding1D
 from internlm.model.modules.linear import (
+    ColumnParallelLinear,
     ParallelLinearWithCommExt,
     RewardModelLinear,
+    RowParallelLinear,
     ScaleColumnParallelLinear,
 )
 from internlm.model.modules.mha import GQA, MHA

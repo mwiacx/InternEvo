@@ -81,7 +81,3 @@ def register_model_initializer() -> None:
     model_initializer.register_module("INTERNLM2_PUBLIC", InternLM2Initializer)
     model_initializer.register_module("LLAMA2", Llama2Initializer)
     model_initializer.register_module("INTERNLM_MoE", InternLMMoEInitializer)
-    # FIXME: moe内部不应该用全局的model initializer，否则包依赖关系会非常混乱
-    # model_initializer.register_module("GShard", GShardMOEInitializer)
-    # model_initializer.register_module("MegaBlock-D", MegaBlockdMoEInitializer)
-    # model_initializer.register_module("MegaBlock", MegaBlockMoEInitializer)

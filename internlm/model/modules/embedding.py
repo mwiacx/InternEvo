@@ -14,7 +14,7 @@ from internlm.core.parallel.comm.utils import (
     gather_forward_split_backward,
     split_forward_gather_backward,
 )
-from internlm.model.ops.rotay_emb import apply_rotary_emb
+from internlm.model.ops.rotary_emb import apply_rotary_emb
 
 
 class Embedding1D(nn.Module):

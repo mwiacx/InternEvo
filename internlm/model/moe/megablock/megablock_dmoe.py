@@ -14,7 +14,8 @@ try:
     import stk
     from megablocks import ops
 except (ModuleNotFoundError, ImportError):
-    print("TODO: import stk, megablocks error")
+    stk = None
+    megablocks = None
 
 
 

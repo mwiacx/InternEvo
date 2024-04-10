@@ -10,7 +10,6 @@ from internlm.utils.common import get_current_device
 
 
 def create_model(model_type, *args, **kwargs) -> Union[nn.Module, List[nn.Module]]:
-    # TODO: rewrite the function
     num_layers = kwargs.get("num_layers")
     num_chunks = kwargs.pop("num_chunks", 1)
     # TODO: fix use_flash_attn parameter config

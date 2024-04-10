@@ -13,7 +13,7 @@ from internlm.model.moe.utils import all_to_all
 try:
     from megablocks import ops
 except (ModuleNotFoundError, ImportError):
-    print("TODO: import stk, megablocks error")
+    ops = None
 
 class MegaBlockMoE(BaseMoELayer):
     """
