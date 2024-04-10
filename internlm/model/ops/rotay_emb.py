@@ -69,7 +69,7 @@ def _select_apply_rotary_func(
         _torch_apply_rotary_func(x1, x2, cos, sin, out1, out2, conj)
 
 
-# TODO(chenxun): 添加flashattn引用
+# adpated from https://github.com/Dao-AILab/flash-attention/blob/main/flash_attn/layers/rotary.py#L35
 class ApplyRotaryEmb(torch.autograd.Function):
     """
     ApplyRotaryEmb
@@ -148,7 +148,7 @@ class ApplyRotaryEmb(torch.autograd.Function):
 def apply_rotary_emb(
     x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor, interleaved: bool = False, in_place: bool = False
 ):
-    # TODO: 更加统一的支持 deeplink
+    # TODO: Support deeplink in a more unified manner
     if internlm_accelerator.get_accelerator_backend() == AcceleratorType.DIPU:
         # TODO: to support in_place argument
         return DeeplinkApplyRotaryEmb.apply(x, cos, sin, interleaved)

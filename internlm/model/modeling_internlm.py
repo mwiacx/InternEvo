@@ -69,6 +69,7 @@ class PackedFlashBaseLayer1D(nn.Module):
         residual_in_fp32: bool = False,
         device: Optional[torch.device] = None,
         norm_type: str = "rmsnorm",
+        qk_interleaved: bool = False,
         dropout_selective_checkpoint: bool = True,
         use_scaled_init: bool = True,
         use_swiglu: bool = True,
@@ -98,6 +99,7 @@ class PackedFlashBaseLayer1D(nn.Module):
             rope_base=rope_base,
             device=device,
             dtype=dtype,
+            qk_interleaved=qk_interleaved,
         )
 
         # Compatible with the name of internlm1 Wqkv linear layer
@@ -261,6 +263,7 @@ class PackedFlashInternLm1D(nn.Module):
         device: Optional[torch.device] = None,
         residual_in_fp32: bool = False,
         norm_type: str = "rmsnorm",
+        qk_interleaved: bool = False,
         is_reward: bool = False,
         dropout_selective_checkpoint: bool = True,
         use_scaled_init: bool = True,
@@ -314,6 +317,7 @@ class PackedFlashInternLm1D(nn.Module):
                     use_scaled_init=use_scaled_init,
                     use_swiglu=use_swiglu,
                     rope_base=rope_base,
+                    qk_interleaved=qk_interleaved,
                     mlp_layer_fusion=mlp_layer_fusion,
                     multiple_of=multiple_of,
                 )

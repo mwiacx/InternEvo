@@ -388,7 +388,6 @@ class GShardMOELayer(BaseMoELayer):
         hidden_features: int,
         out_features: int,
         num_experts: int,
-        # ep_cls: Optional[Callable],
         ep_group: Optional[torch.distributed.ProcessGroup],
         ep_size: int,
         top_k: int = 1,

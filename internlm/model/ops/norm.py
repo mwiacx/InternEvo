@@ -72,7 +72,7 @@ class _RMSNorm(torch.nn.Module):
         return f"{self.normalized_shape}, eps={self.eps}, "
 
 
-# TODO: 实现更统一的形式
+# TODO: Support deeplink in a more unified manner
 RMSNorm = (
     DeepLinkRMSNormWithNormalizedShape
     if internlm_accelerator.get_accelerator_backend() == AcceleratorType.DIPU and deeplink_rmsnorm_impl

@@ -51,7 +51,6 @@ class MoE(torch.nn.Module):
         in_features: int,
         hidden_features: int,
         out_features: int,
-        # ep_cls: Optional[Callable],
         ep_group: Optional[torch.distributed.ProcessGroup],
         num_experts: int = 1,
         ep_size=1,

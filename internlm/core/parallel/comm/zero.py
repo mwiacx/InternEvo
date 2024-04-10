@@ -101,7 +101,6 @@ class ParamAsyncBcastHandler:
             # NOTE: Although the layernorm layer does not have explicit processing,
             # both ISPCommunicator and ParamAsyncBcastHandler handle transformer blocks as granularity,
             # so everything is fine.
-            # TODO: 用另外的方式判断emb 和 head 层
             if isp_communicator is None or isinstance(block, (Embedding1D, ScaleColumnParallelLinear)):
                 block.register_forward_pre_hook(_pre_forward_hook)
         if isp_communicator:

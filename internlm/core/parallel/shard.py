@@ -28,7 +28,6 @@ def get_head_parallel_mode() -> ParallelMode:
 
 
 def get_parallel_strategies_split_mode(linear_name: str) -> str:
-    # TODO: 是否存在一种比根据名字来判断的方式？
     tp_mode = gpc.config.parallel.tensor.mode
 
     if linear_name in ("head", "output"):

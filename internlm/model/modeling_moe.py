@@ -64,6 +64,7 @@ class PackedFlashBaseLayer1D(nn.Module):
         residual_in_fp32: bool = False,
         device: Optional[torch.device] = None,
         norm_type: str = "rmsnorm",
+        qk_interleaved: bool = False,
         dropout_selective_checkpoint: bool = True,
         use_scaled_init: bool = True,
         use_swiglu: bool = True,
@@ -83,7 +84,6 @@ class PackedFlashBaseLayer1D(nn.Module):
         self.mixer = MHA(
             embed_dim=hidden_size,
             num_heads=num_attention_heads,
-
             dropout=attn_drop_rate,
             max_position_embeddings=max_position_embeddings,
             softmax_scale=1 / math.sqrt(head_dim),
@@ -94,6 +94,7 @@ class PackedFlashBaseLayer1D(nn.Module):
             rotary_emb_scale_base=0,
             device=device,
             dtype=dtype,
+            qk_interleaved=qk_interleaved,
         )
 
         self.dropout1 = nn.Dropout(drop_rate)
@@ -127,7 +128,6 @@ class PackedFlashBaseLayer1D(nn.Module):
                 int(hidden_size * mlp_ratio),
                 out_features=hidden_size,
                 num_experts=num_experts,
-                # ep_cls=mlp_cls,  # TODO: check it.
                 ep_group=gpc.get_group(ParallelMode.EXPERT),
                 ep_size=ep_size,
                 device=device,
@@ -281,6 +281,7 @@ class PackedFlashInternLm1D(nn.Module):
         device: Optional[torch.device] = None,
         residual_in_fp32: bool = False,
         norm_type: str = "rmsnorm",
+        qk_interleaved: bool = False,
         is_reward: bool = False,
         dropout_selective_checkpoint: bool = True,
         use_scaled_init: bool = True,
@@ -332,6 +333,7 @@ class PackedFlashInternLm1D(nn.Module):
                     dropout_selective_checkpoint=dropout_selective_checkpoint,
                     use_scaled_init=use_scaled_init,
                     use_swiglu=use_swiglu,
+                    qk_interleaved=qk_interleaved,
                     num_experts=num_experts,
                     mlp_layer_fusion=mlp_layer_fusion,
                     multiple_of=multiple_of,

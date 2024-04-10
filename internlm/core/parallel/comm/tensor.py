@@ -45,6 +45,13 @@ class TPCommunicator(ABC):
         pass
 
     @abstractmethod
+    def communication_mode(self) -> str:
+        """
+        communication mode of communictor
+        """
+        pass
+
+    @abstractmethod
     def input_hook(
         self, _input: torch.Tensor, async_op: bool = False, is_forward: bool = True
     ) -> Tuple[torch.Tensor, AsyncCommHandle]:
@@ -88,6 +95,9 @@ class TensorParallelCommunicator(TPCommunicator):
 
     def save_total_input(self) -> bool:
         return self._save_total_input
+
+    def communication_mode(self) -> str:
+        return "tp"
 
     def input_hook(
         self, _input: torch.Tensor, async_op: bool = False, is_forward: bool = True
@@ -137,6 +147,9 @@ class SequenceParallelCommunicator(TPCommunicator):
 
     def save_total_input(self) -> bool:
         return self._save_total_input
+
+    def communication_mode(self) -> str:
+        return "sp"
 
     def input_hook(
         self, _input: torch.Tensor, async_op: bool = False, is_forward: bool = True

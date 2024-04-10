@@ -67,6 +67,7 @@ class MHA(nn.Module):
         rope_base: int = 10000,
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None,
+        qk_interleaved: Optional[bool] = True,
         enable_qkv_fusion: bool = True,
     ) -> None:
         super().__init__()
@@ -81,6 +82,7 @@ class MHA(nn.Module):
         self.use_dynamic_ntk_rope = use_dynamic_ntk_rope
         self.rotary_emb_dim = rotary_emb_dim
         self.max_position_embeddings = max_position_embeddings
+        self.interleaved = qk_interleaved
 
         factory_kwargs = {"device": device, "dtype": dtype}
 
@@ -143,8 +145,12 @@ class MHA(nn.Module):
         # rotary embedding
         indexes = kwargs.pop("indexes", 0)
         max_seqlen = kwargs.get("max_seqlen", None)
-        self.rotary_emb(q, offsets=indexes, cache_type="query", max_seqlen=max_seqlen, in_place=True)
-        self.rotary_emb(k, offsets=indexes, cache_type="key", max_seqlen=max_seqlen, in_place=True)
+        self.rotary_emb(
+            q, offsets=indexes, cache_type="query", interleaved=self.interleaved, max_seqlen=max_seqlen, in_place=True
+        )
+        self.rotary_emb(
+            k, offsets=indexes, cache_type="key", interleaved=self.interleaved, max_seqlen=max_seqlen, in_place=True
+        )
 
         # self attention
         if self.enable_qkv_fusion:
@@ -217,26 +223,36 @@ class MHA(nn.Module):
                     )
 
                 if self.rotary_emb_dim > 0:
-                    q = self.rotary_emb(q, offsets=sequence_len_offset, cache_type="query")
+                    q = self.rotary_emb(
+                        q, offsets=sequence_len_offset, cache_type="query", interleaved=self.interleaved
+                    )
                     k = kv[:, :, 0].squeueze(2)
-                    self.rotary_emb(k, offsets=0, cache_type="key", in_place=True)  # in-place is important
+                    self.rotary_emb(
+                        k, offsets=0, cache_type="key", interleaved=self.interleaved, in_place=True
+                    )  # in-place is important
             else:
                 if self.rotary_emb_dim > 0:
-                    q = self.rotary_emb(q, offsets=0, cache_type="query")
+                    q = self.rotary_emb(q, offsets=0, cache_type="query", interleaved=self.interleaved)
                     k = kv[:, :, 0].squeueze(2)
-                    self.rotary_emb(k, offsets=0, cache_type="key", in_place=True)  # in-place is important
+                    self.rotary_emb(
+                        k, offsets=0, cache_type="key", interleaved=self.interleaved, in_place=True
+                    )  # in-place is important
         else:
             assert self.rotary_emb_dim > 0, "You should use rotary_emb."
 
             k, v = kv[:, :, 0].squeueze(2), kv[:, :, 1].squeueze(2)
 
             if attention_mask is None:
-                q = self.rotary_emb(q, offsets=sequence_len_offset, cache_type="query")
-                k = self.rotary_emb(k, offsets=sequence_len_offset, cache_type="key")
+                q = self.rotary_emb(q, offsets=sequence_len_offset, cache_type="query", interleaved=self.interleaved)
+                k = self.rotary_emb(k, offsets=sequence_len_offset, cache_type="key", interleaved=self.interleaved)
             else:
                 if sequence_len_offset == 0:
-                    q = self.rotary_emb(q, offsets=0, cache_type="query", left_padding_mask=attention_mask)
-                    k = self.rotary_emb(k, offsets=0, cache_type="key", left_padding_mask=attention_mask)
+                    q = self.rotary_emb(
+                        q, offsets=0, cache_type="query", interleaved=self.interleaved, left_padding_mask=attention_mask
+                    )
+                    k = self.rotary_emb(
+                        k, offsets=0, cache_type="key", interleaved=self.interleaved, left_padding_mask=attention_mask
+                    )
                 else:
                     if sequence_len_offset > self.max_position_embeddings:
                         logger.warning(
@@ -248,8 +264,8 @@ class MHA(nn.Module):
                     empties = attention_mask[..., -1].sum(dim=-1)
                     indexes4q = sequence_len_offset * torch.ones(q.size(0), dtype=torch.int, device=q.device) - empties
                     indexes4k = sequence_len_offset * torch.ones(k.size(0), dtype=torch.int, device=k.device) - empties
-                    q = self.rotary_emb(q, offsets=indexes4q, cache_type="query")
-                    k = self.rotary_emb(k, offsets=indexes4k, cache_type="key")
+                    q = self.rotary_emb(q, offsets=indexes4q, cache_type="query", interleaved=self.interleaved)
+                    k = self.rotary_emb(k, offsets=indexes4k, cache_type="key", interleaved=self.interleaved)
 
             kv = torch.stack([k, v], dim=2)
             # update kv cache after rotary embedding when disable dynamic ntk rope.
@@ -312,8 +328,6 @@ class GQA(nn.Module):
                                     XPos(Sun et al., https://arxiv.org/abs/2212.10554). 0 by default.
         device (Optional[Union[str, torch.device]]): The device will be used.
         dtype (Optional[torch.dtype]): The type of data.
-        rot_embed_HF_impl (Optional[bool]): Whether to use the rotary embedding implementation from HuggingFace.
-                                            True by default.
     """
 
     def __init__(
@@ -333,7 +347,7 @@ class GQA(nn.Module):
         rotary_emb_scale_base: int = 0,
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None,
-        rot_embed_HF_impl: Optional[bool] = True,
+        qk_interleaved: Optional[bool] = True,
         enable_qkv_fusion: bool = True,
     ) -> None:
         super().__init__()
@@ -351,7 +365,7 @@ class GQA(nn.Module):
         self.use_dynamic_ntk_rope = use_dynamic_ntk_rope
         self.rotary_emb_dim = rotary_emb_dim
         self.max_position_embeddings = max_position_embeddings
-        self.rot_embed_HF_impl = rot_embed_HF_impl
+        self.interleaved = qk_interleaved
 
         factory_kwargs = {"device": device, "dtype": dtype}
 
@@ -423,12 +437,12 @@ class GQA(nn.Module):
             max_seqlen_q = kwargs.get("max_seqlen_q", None)
             max_seqlen_k = kwargs.get("max_seqlen_k", None)
 
-            if not self.rot_embed_HF_impl:
-                q = torch.cat([q[..., ::2], q[..., 1::2]], dim=-1)
-                k = torch.cat([k[..., ::2], k[..., 1::2]], dim=-1)
-
-            q = self.rotary_emb(q, offsets=indexes, max_seqlen=max_seqlen_q, cache_type="query")
-            k = self.rotary_emb(k, offsets=indexes, max_seqlen=max_seqlen_k, cache_type="key")
+            q = self.rotary_emb(
+                q, offsets=indexes, max_seqlen=max_seqlen_q, cache_type="query", interleaved=self.interleaved
+            )
+            k = self.rotary_emb(
+                k, offsets=indexes, max_seqlen=max_seqlen_k, cache_type="key", interleaved=self.interleaved
+            )
 
         kv = torch.concat([k.unsqueeze(2), v.unsqueeze(2)], dim=2)
 
@@ -483,9 +497,6 @@ class GQA(nn.Module):
             k = rearrange(k, "b s (h d) -> b s h d", d=self.head_dim)
             v = rearrange(v, "b s (h d) -> b s h d", d=self.head_dim)
 
-        if not self.rot_embed_HF_impl:
-            q = torch.cat([q[..., ::2], q[..., 1::2]], dim=-1)
-            k = torch.cat([k[..., ::2], k[..., 1::2]], dim=-1)
 
         # rotary embedding, output: q, kv
         assert self.rotary_emb_dim > 0
@@ -497,14 +508,18 @@ class GQA(nn.Module):
             )
         else:
             if inference_params.sequence_len_offset == 0:
-                q = self.rotary_emb(q, offsets=0, cache_type="query", left_padding_mask=attention_mask)
-                k = self.rotary_emb(k, offsets=0, cache_type="key", left_padding_mask=attention_mask)
+                q = self.rotary_emb(
+                    q, offsets=0, cache_type="query", interleaved=self.interleaved, left_padding_mask=attention_mask
+                )
+                k = self.rotary_emb(
+                    k, offsets=0, cache_type="key", interleaved=self.interleaved, left_padding_mask=attention_mask
+                )
             else:
                 empties = attention_mask[..., -1].sum(dim=-1)
                 indexes4q = sequence_len_offset * torch.ones(q.size(0), dtype=torch.int, device=q.device) - empties
                 indexes4k = sequence_len_offset * torch.ones(k.size(0), dtype=torch.int, device=k.device) - empties
-                q = self.rotary_emb(q, offsets=indexes4q, cache_type="query")
-                k = self.rotary_emb(k, offsets=indexes4k, cache_type="key")
+                q = self.rotary_emb(q, offsets=indexes4q, cache_type="query", interleaved=self.interleaved)
+                k = self.rotary_emb(k, offsets=indexes4k, cache_type="key", interleaved=self.interleaved)
 
         kv = torch.stack([k, v], dim=2)
 

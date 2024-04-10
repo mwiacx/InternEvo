@@ -142,20 +142,20 @@ class RotaryEmbedding(torch.nn.Module):
         else:
             return tensor[offsets]
 
-    def _covert_padding(
-        self, x: torch.Tensor, empties: torch.Tensor, covert_type: str = "left2right", in_place: bool = False
+    def _convert_padding(
+        self, x: torch.Tensor, empties: torch.Tensor, convert_type: str = "left2right", in_place: bool = False
     ):
         # TODO: impl in_place = True.
         assert not in_place, "in_place = True is NYI."
-        assert covert_type in ("left2right", "right2left"), f"Unknown covert type {covert_type}"
+        assert convert_type in ("left2right", "right2left"), f"Unknown convert type {convert_type}"
 
-        ret = x.clone()  # TODO: check it.
+        ret = x.clone()
 
         for i in range(len(empties)):
             if empties[i] == 0:
                 continue
 
-            if covert_type == "left2right":
+            if convert_type == "left2right":
                 ret[i][: -empties[i]] = x[i][empties[i] :]
                 ret[i][empties[i] :] = x[i][: -empties[i]]
             else:  # right2left
@@ -169,8 +169,8 @@ class RotaryEmbedding(torch.nn.Module):
         x: torch.Tensor,
         offsets: Union[int, torch.Tensor] = 0,
         max_seqlen: Optional[int] = None,
-        cache_type: str = "query",  # 有没有可能优化一下？
-        interleaved: bool = False,  # TODO: 标准化模型设置 interleaved
+        cache_type: str = "query",
+        interleaved: bool = False,
         in_place: bool = False,
         left_padding_mask: Optional[torch.Tensor] = None,
     ):
@@ -180,7 +180,7 @@ class RotaryEmbedding(torch.nn.Module):
 
         if left_padding_mask is not None:
             empties = left_padding_mask[..., -1].sum(dim=-1)
-            x = self._covert_padding(x, empties, covert_type="left2right", in_place=in_place)
+            x = self._convert_padding(x, empties, convert_type="left2right", in_place=in_place)
 
         self._update_cos_sin_cache(x, offsets, max_seqlen)
 
@@ -191,7 +191,7 @@ class RotaryEmbedding(torch.nn.Module):
         )
 
         if left_padding_mask is not None:
-            ret = self._covert_padding(ret, empties, covert_type="right2left", in_place=in_place)
+            ret = self._convert_padding(ret, empties, convert_type="right2left", in_place=in_place)
 
         return ret
 

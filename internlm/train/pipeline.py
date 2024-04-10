@@ -46,9 +46,8 @@ from internlm.model.builder import create_model
 from internlm.model.metrics import SchedulerMetricHook
 from internlm.model.modules.embedding import Embedding1D
 from internlm.model.modules.linear import (
-    ColumnParallelLinear,
+    ParallelLinearWithCommExt,
     RewardModelLinear,
-    RowParallelLinear,
     ScaleColumnParallelLinear,
 )
 from internlm.model.modules.mha import GQA, MHA
@@ -102,7 +101,6 @@ def set_fp32_attr_for_model(model: Union[nn.Module, nn.ModuleList]):
 
 
 def set_parallel_attr_for_param_groups(model: Union[nn.Module, nn.ModuleList]):
-    # TODO(chenxun): check it.
     def _check_module(module):
         # layer_norm
         if isinstance(module, (RMSNorm, nn.LayerNorm)):
@@ -129,7 +127,7 @@ def set_parallel_attr_for_param_groups(model: Union[nn.Module, nn.ModuleList]):
         # for linear module
         if isinstance(
             module,
-            (ColumnParallelLinear, RowParallelLinear, MegaBlockFeedForward, MegaBlockGroupedFeedForward),
+            (ParallelLinearWithCommExt, MegaBlockFeedForward, MegaBlockGroupedFeedForward),
         ):
             for param in module.parameters():
                 if gpc.is_initialized(ParallelMode.EXPERT_DATA) and is_moe_param(param):
@@ -262,7 +260,6 @@ def wrap_FSDP_model(model: Union[nn.Module, nn.ModuleList]):
     return model
 
 
-# TODO: move to internlm/core/parallel package.
 def initialize_parallel_communicator(model: Union[nn.Module, nn.ModuleList]):
     """
     Initialize communicator for isp tensor parallel mode.

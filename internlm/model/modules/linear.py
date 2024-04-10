@@ -33,7 +33,7 @@ custom_fwd = internlm_accelerator.return_custom_fwd()
 
 
 # adpated from https://github.com/Dao-AILab/flash-attention/blob/main/flash_attn/ops/fused_dense.py
-class FusedDenseFunc(torch.autograd.Function):
+class SPFusedDenseFunc(torch.autograd.Function):
     "FusedDenseFunc for tensor parallel in flash-attn implementation."
 
     @staticmethod
@@ -151,7 +151,7 @@ class FusedDenseFunc(torch.autograd.Function):
 # Q: Should we unify ISPFusedDenseFunc and FusedDenseFunc, as well as the related communicator interface?
 # A: Currently, ISPFusedDenseFunc and FusedDenseFunc have significant differences in their computation logic
 #    and communication interfaces, so they should not be unified.
-class ISPFusedDenseFunc(torch.autograd.Function):
+class WPFusedDenseFunc(torch.autograd.Function):
     "FusedDenseFunc for ISP, which is optimized based on flash implementation."
 
     @staticmethod
@@ -269,20 +269,20 @@ def fused_dense_func(
     bias: Optional[torch.Tensor] = None,
     return_residual: bool = False,
 ):
-    if isinstance(communicator, TPCommunicator):
-        return FusedDenseFunc.apply(
-            x,
-            weight,
-            bias,
-            communicator,
-            return_residual,
-        )
-    else:
-        return ISPFusedDenseFunc.apply(
+    if communicator.communication_mode() == "wp":
+        return WPFusedDenseFunc.apply(
             x,
             weight,
             bias,
             module,
+            communicator,
+            return_residual,
+        )
+    else: # mtp, msp, and fsp
+        return SPFusedDenseFunc.apply(
+            x,
+            weight,
+            bias,
             communicator,
             return_residual,
         )

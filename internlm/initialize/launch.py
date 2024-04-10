@@ -352,6 +352,17 @@ def args_sanity_check():
     if "mlp_layer_fusion" not in model:
         model._add_item("mlp_layer_fusion", False)
 
+    # qk_interleaved config
+    if "qk_interleaved" not in gpc.config.model:
+        if "adapt_hf" in gpc.config.model:
+            model._add_item("qk_interleaved", not gpc.config.model.adapt_hf)
+        else:
+            model._add_item("qk_interleaved", False)
+    elif "adapt_hf" in gpc.config.model:
+        assert gpc.config.model.adapt_hf == (
+            not gpc.config.model.qk_interleaved
+        ), "adapt_hf and qk_interleaved must be opposite"
+
     # process the parallel config
     if "sequence_parallel" not in gpc.config.parallel:
         gpc.config.parallel._add_item("sequence_parallel", False)

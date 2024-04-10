@@ -33,7 +33,6 @@ except (ModuleNotFoundError, ImportError):
     is_torch_npu = False
 
 try:
-    # TODO: support deeplink
     from deeplink_ext.internlm_ops.mha import (
         DeepLinkCrossAttention,
         DeepLinkSelfAttention,

@@ -451,6 +451,9 @@ class ISPCommunicator:
                 device=self.model_conf.device,
             ).contiguous()
 
+    def communication_mode(self) -> str:
+        return "wp"
+
     def switch_current_model_chunk(self, chunk_id: int) -> None:
         self._isp_outs = self._overlap_states[chunk_id].isp_outs
         self._isp_modules = self._overlap_states[chunk_id].isp_modules
