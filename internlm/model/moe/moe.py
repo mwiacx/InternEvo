@@ -3,7 +3,7 @@ from typing import Optional
 import torch
 
 from internlm.core.context import global_context as gpc
-from internlm.model.modules.mlp import new_fead_forward
+from internlm.model.modules.mlp import new_feed_forward
 from internlm.model.moe.gshard_layer import GShardMOELayer
 from internlm.model.moe.megablock.megablock_dmoe import MegaBlockdMoE
 from internlm.model.moe.megablock.megablock_moe import MegaBlockMoE
@@ -80,7 +80,7 @@ class MoE(torch.nn.Module):
         # residual network, see https://arxiv.org/pdf/2201.05596.pdf, seems useful for convergence
         self.use_residual = use_residual
         if self.use_residual:
-            self.residual_mlp = new_fead_forward(
+            self.residual_mlp = new_feed_forward(
                 in_features=in_features,
                 hidden_features=hidden_features,
                 out_features=out_features,

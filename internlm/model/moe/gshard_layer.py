@@ -15,7 +15,7 @@ from torch.nn import Module
 
 from internlm.core.context import ParallelMode
 from internlm.core.context import global_context as gpc
-from internlm.model.modules.mlp import new_fead_forward
+from internlm.model.modules.mlp import new_feed_forward
 from internlm.utils.logger import get_logger
 from internlm.utils.megatron_timers import megatron_timer as timer
 
@@ -420,7 +420,7 @@ class GShardMOELayer(BaseMoELayer):
             ),
             torch.nn.ModuleList(
                 [
-                    new_fead_forward(
+                    new_feed_forward(
                         in_features,
                         hidden_features,
                         out_features,

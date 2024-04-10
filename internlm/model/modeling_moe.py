@@ -15,7 +15,7 @@ from internlm.initialize.initialize_tensor import normal_, scaled_init_method_no
 from internlm.model.modules.embedding import Embedding1D
 from internlm.model.modules.linear import new_linear
 from internlm.model.modules.mha import MHA
-from internlm.model.modules.mlp import new_fead_forward
+from internlm.model.modules.mlp import new_feed_forward
 from internlm.model.modules.norm import new_layer_norm
 from internlm.model.moe.moe import MoE
 from internlm.solver.activation_checkpoint import activation_checkpoint
@@ -107,7 +107,7 @@ class PackedFlashBaseLayer1D(nn.Module):
         ep_size = gpc.get_world_size(ParallelMode.EXPERT)
         if num_experts <= 1:  # dense, not MoE
             if use_swiglu:
-                self.mlp = new_fead_forward(
+                self.mlp = new_feed_forward(
                     hidden_size,
                     int(hidden_size * mlp_ratio),
                     out_features=hidden_size,

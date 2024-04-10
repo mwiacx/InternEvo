@@ -14,7 +14,7 @@ from internlm.initialize.initialize_tensor import normal_, scaled_init_method_no
 from internlm.model.modules.embedding import Embedding1D
 from internlm.model.modules.linear import new_linear
 from internlm.model.modules.mha import MHA
-from internlm.model.modules.mlp import new_fead_forward
+from internlm.model.modules.mlp import new_feed_forward
 from internlm.model.modules.norm import new_layer_norm
 from internlm.solver.activation_checkpoint import activation_checkpoint
 from internlm.utils.logger import get_logger
@@ -112,7 +112,7 @@ class PackedFlashBaseLayer1D(nn.Module):
         self.norm2 = new_layer_norm(norm_type, hidden_size, eps=layer_norm_epsilon)
 
         if use_swiglu:
-            self.mlp = new_fead_forward(
+            self.mlp = new_feed_forward(
                 hidden_size,
                 int(hidden_size * mlp_ratio),
                 out_features=hidden_size,

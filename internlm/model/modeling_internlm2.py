@@ -16,7 +16,7 @@ from internlm.initialize.initialize_tensor import (
 from internlm.model.modules.embedding import Embedding1D
 from internlm.model.modules.linear import new_linear
 from internlm.model.modules.mha import GQA
-from internlm.model.modules.mlp import new_fead_forward
+from internlm.model.modules.mlp import new_feed_forward
 from internlm.model.modules.norm import new_layer_norm
 from internlm.solver.activation_checkpoint import activation_checkpoint
 from internlm.utils.logger import get_logger
@@ -136,7 +136,7 @@ class PackedFlashLlamaLayer1D(nn.Module):
         #     assert isinstance(self.attention_norm, nn.LayerNorm) and isinstance(self.dropout1, nn.Dropout)
 
         if use_swiglu:
-            self.feed_forward = new_fead_forward(
+            self.feed_forward = new_feed_forward(
                 hidden_size,
                 int(hidden_size * mlp_ratio),
                 out_features=hidden_size,

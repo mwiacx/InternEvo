@@ -97,7 +97,7 @@ class FeedForward(nn.Module):
         return out
 
 
-def new_fead_forward(
+def new_feed_forward(
     in_features: int,
     hidden_features: int,
     out_features: int = None,
