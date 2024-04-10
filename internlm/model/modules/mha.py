@@ -1,512 +1,23 @@
 #!/usr/bin/env python
 # -*- encoding: utf-8 -*-
-
-from typing import Callable, Optional
+import math
+from typing import Callable, Dict, Optional
 
 import torch
 from einops import rearrange
 from torch import nn
+from torch.nn import functional as F
 
 from internlm.model.modules.embedding import new_rotary_embedding
 from internlm.model.modules.linear import new_linear
+from internlm.model.modules.utils import update_kv_cache
 from internlm.model.ops.attention import CrossAttention, SelfAttention
+from internlm.utils.logger import get_logger
 
-# MHA, qkvpacked, inference
-# def _inference(self, x, inference_params=None, **kwargs):
-#         qkv = self.Wqkv(x)
-#         qkv = rearrange(qkv, "... (three h d) -> ... three h d", three=3, d=self.head_dim)
-
-#         bsz, *_ = qkv.shape  # 是否需要支持 data-packed
-
-#         if self.use_dynamic_ntk_rope:
-#             q = qkv[:, :, 0]
-#             assert self.layer_idx is not None, "Generation requires layer_idx in the constructor"
-#             kv = update_kv_cache(qkv[:, :, 1:], inference_params, self.layer_idx)
-#             if inference_params.sequence_len_offset != 0:
-#                 # q shape: [bsz, 1, nheads, head_dim]
-#                 # kv shape: [bsz, seqlen, 2, nheads, head_dim]
-#                 # bsz, seq_len, _, nheads, head_dim = kv.shape
-#                 # q = torch.cat([q.new_zeros(size=(bsz, seq_len - 1, nheads, head_dim)), q], dim=1).unsqueeze(2)
-
-#                 # qkv = torch.cat([q, kv], dim=2)
-#                 if self.rotary_emb_dim > 0:
-#                     k = kv[:, :, 1].squeeze(2)
-#                     q = self.rotary_emb(
-#                         q.squeeze(2), offsets=inference_params.sequence_len_offset, cache_type="query"
-#                     ).unsqueeze(2)
-#                     self.rotary_emb(k, offsets=0, cache_type="key", in_place=True)  # in-place
-#                     # qkv = self.rotary_emb(qkv)
-#                 # q = qkv[:, [-1], 0]
-#                 # kv = qkv[:, :, 1:]
-#             else:
-#                 if inference_params.sequence_len_offset > self.max_position_embeddings:
-#                     warnings.warn(
-#                         "Notice your prompt's length is longer than model's max_position_embeddings: "
-#                         f"{self.max_position_embeddings}, which will cause deviations in dynamic ntk calculations."
-#                     )
-#                 if self.rotary_emb_dim > 0:
-#                     # kwargs["inference_params"] = inference_params
-#                     # qkv = self.rotary_emb(qkv, **kwargs)
-#                     k = qkv[:, :, 1].squeeze(2)
-#                     q = self.rotary_emb(q.squeeze(2), offsets=0, cache_type="query").unsqueeze(2)
-#                     self.rotary_emb(k, offsets=0, cache_type="key", in_place=True)  # in-place
-#                     # q = qkv[:, :, 0]
-#                     kv = qkv[:, :, 1:]
-#         else:
-#             assert self.layer_idx is not None, "Generation requires layer_idx in the constructor"
-#             q, k, v = (x.squeeze(2) for x in qkv.chunk(chunks=3, dim=2))
-#             kv = torch.stack([k, v], dim=2)
-#             assert self.rotary_emb_dim > 0, "You should use rotary_emb."
-#             cu_seqlens = kwargs.get("cu_seqlens", None)
-#             # max_seqlen = kwargs.get("max_seqlen", None)
-
-#             if hasattr(inference_params, "attention_mask") and inference_params.attention_mask is not None:
-#                 empties = inference_params.attention_mask[..., -1].sum(dim=-1)
-#                 if inference_params.sequence_len_offset == 0:
-#                     q = self.rotary_emb(
-#                         q, offsets=0, cache_type="query", left_padding_mask=inference_params.attention_mask
-#                     )
-#                     k = self.rotary_emb(
-#                         k, offsets=0, cache_type="key", left_padding_mask=inference_params.attention_mask
-#                     )
-#                 else:
-#                     if inference_params.sequence_len_offset > self.max_position_embeddings:
-#                         warnings.warn(
-#                             "Notice your prompt's length is longer than model's max_position_embeddings: "
-#                             f"{self.max_position_embeddings}, may cause deviations in dynamic ntk calculations."
-#                         )
-#                     q = q.squeeze(1)
-#                     k = k.squeeze(1)
-#                     q = self.rotary_emb(
-#                         q,
-#                         inference_params.sequence_len_offset * torch.ones(q.size(0), dtype=torch.int, device=q.device)
-#                         - empties,
-#                         cache_type="query",
-#                     ).unsqueeze(1)
-#                     k = self.rotary_emb(
-#                         k,
-#                         inference_params.sequence_len_offset * torch.ones(k.size(0), dtype=torch.int, device=k.device)
-#                         - empties,
-#                         cache_type="key",
-#                     ).unsqueeze(1)
-#             else:
-#                 q = self.rotary_emb(q, inference_params.sequence_len_offset, cache_type="query")
-#                 k = self.rotary_emb(k, inference_params.sequence_len_offset, cache_type="key")
-
-#             kv = torch.stack([k, v], dim=2)
-#             kv = update_kv_cache(kv, inference_params, self.layer_idx)
-
-#         if hasattr(inference_params, "attention_mask") and inference_params.attention_mask is not None:
-#             if inference_params.sequence_len_offset == 0:  # First entrance, attnmask (bs*seqlen*seqlen)
-#                 attn_mask = inference_params.attention_mask[:, None, ...]
-#                 attn_mask = torch.logical_or(torch.ones_like(attn_mask, dtype=torch.bool).triu(diagonal=1), attn_mask)
-#                 attn_mask4flsh = ~attn_mask[:, :, -1, :].view(bsz, -1)
-#                 cu_seqlens = torch.concat(
-#                     [
-#                         torch.tensor([0], dtype=torch.int32, device=attn_mask4flsh.device),
-#                         attn_mask4flsh.sum(dim=-1).to(dtype=torch.int32),
-#                     ],
-#                     dim=0,
-#                 )
-#                 cu_seqlens = cu_seqlens.cumsum(dim=0, dtype=torch.int32)
-#                 max_seqlen_q = attn_mask4flsh.shape[-1]
-#                 max_seqlen_k = attn_mask4flsh.shape[-1]
-#                 total_q = q.masked_select(attn_mask4flsh.view(bsz, -1, 1, 1)).view(-1, q.shape[-2], q.shape[-1])
-#                 total_kv = kv.masked_select(attn_mask4flsh.view(bsz, -1, 1, 1, 1)).view(
-#                     -1, kv.shape[-3], kv.shape[-2], kv.shape[-1]
-#                 )
-
-#                 # if gpc.config.model.dtype is torch.float32 and gpc.config.model.use_cuda_flash_attn:
-#                 #     with internlm_accelerator.amp.autocast(dtype=torch.bfloat16):
-#                 #         if total_q.dtype not in [torch.float16, torch.bfloat16]:
-#                 #             total_q = total_q.to(torch.bfloat16)
-#                 #         if total_kv.dtype not in [torch.float16, torch.bfloat16]:
-#                 #             total_kv = total_kv.to(torch.bfloat16)
-
-#                 # if gpc.config.model.use_cuda_flash_attn:
-#                 #     try:
-#                 #         from flash_attn.flash_attn_interface import (
-#                 #             flash_attn_unpadded_func,
-#                 #         )
-#                 #     except ImportError:
-#                 #         try:
-#                 #             from flash_attn.flash_attn_interface import (
-#                 #                 flash_attn_unpadded_kvpacked_func as flash_attn_unpadded_func,
-#                 #             )
-#                 #         except ImportError:
-#                 #             try:
-#                 #                 from flash_attn.flash_attn_interface import (
-#                 #                     flash_attn_varlen_kvpacked_func as flash_attn_unpadded_func,
-#                 #                 )
-#                 #             except ImportError:
-#                 #                 raise ImportError("Please check your flash_attn version >= 1.0.5.")
-
-#                 output = self.inner_attn(
-#                     total_q,
-#                     total_kv,
-#                     cu_seqlens,
-#                     cu_seqlens,
-#                     max_seqlen_q,
-#                     max_seqlen_k,
-#                     0.0,
-#                     None,
-#                     True,
-#                     False,
-#                 ).to(x.dtype)
-#                 # else:
-#                 #     attn_scores = torch.matmul(total_q, total_kv.transpose(-2, -1)) / (cu_seqlens**0.5)
-#                 #     attn_weights = F.softmax(attn_scores, dim=-1)
-#                 #     output = torch.matmul(attn_weights, total_kv)
-
-#                 context = torch.zeros_like(q)
-#                 context = context.masked_scatter_(attn_mask4flsh.view(bsz, -1, 1, 1), output)
-
-#             else:
-#                 attn_mask = inference_params.attention_mask[:, -1, :].view(bsz, 1, 1, -1)
-
-#                 k, v = torch.chunk(kv, 2, dim=2)
-#                 k = k.squeeze(2)
-#                 v = v.squeeze(2)
-#                 sp = k.shape
-#                 scores = torch.einsum(
-#                     "blhd,bnhd->bhln",
-#                     q,
-#                     k.reshape(sp[0], sp[1], q.size(2), sp[3]),
-#                 ) / math.sqrt(q.size(-1))
-#                 scores = scores.masked_fill(attn_mask, -65000.0)
-#                 scores = F.softmax(scores, dim=-1)  # bsz x h x L x L
-#                 context = torch.einsum(
-#                     "bhmn,bnhd->bmhd",
-#                     scores,
-#                     v.reshape(sp[0], sp[1], q.size(2), sp[3]),
-#                 )
-#         else:
-#             context = self.inner_cross_attn(q, kv, causal=True)
-
-#         context = rearrange(context, "... h d -> ... (h d)")
-
-#         out = self.out_proj(context)
-#         return out
+logger = get_logger(__file__)
 
 
-# GQA, qkv splited, inference, w/o wqkv and wo
-# assert self.rotary_emb_dim > 0
-#             if hasattr(inference_params, "attention_mask") and inference_params.attention_mask is not None:
-#                 empties = inference_params.attention_mask[..., -1].sum(dim=-1)
-#                 if inference_params.sequence_len_offset == 0:
-#                     q = self.rotary_emb(
-#                         q, offsets=0, cache_type="query", left_padding_mask=inference_params.attention_mask
-#                     )
-#                     k = self.rotary_emb(
-#                         k, offsets=0, cache_type="key", left_padding_mask=inference_params.attention_mask
-#                     )
-#                 else:
-#                     q = q.squeeze(1)
-#                     k = k.squeeze(1)
-#                     q = self.rotary_emb(
-#                         q,
-#                         inference_params.sequence_len_offset * torch.ones(q.size(0), dtype=torch.int, device=q.device)
-#                         - empties,
-#                         cache_type="query",
-#                     ).unsqueeze(1)
-#                     k = self.rotary_emb(
-#                         k,
-#                         inference_params.sequence_len_offset * torch.ones(k.size(0), dtype=torch.int, device=k.device)
-#                         - empties,
-#                         cache_type="key",
-#                     ).unsqueeze(1)
-#             else:
-#                 raise NotImplementedError(
-#                     "You should make sure you are aware that you are changing the method of generating."
-#                     "According to your generation function instead of inference/seq_generator_module.py, "
-#                     "You may implement here for normal running."
-#                 )
-
-#             kv = torch.stack([k, v], dim=2)
-
-#             assert self.layer_idx is not None, "Generation requires layer_idx in the constructor"
-#             if hasattr(inference_params, "window_size") and inference_params.window_size is not None:
-#                 if inference_params.window_size <= inference_params.sequence_len_offset:
-#                     assert kv.size(1) == 1, "update kv lenth more than 1"
-#                     inference_params.key_value_memory_dict[self.layer_idx][
-#                         :, inference_params.keep_first : inference_params.window_size - 1, ...
-#                     ] = inference_params.key_value_memory_dict[self.layer_idx][
-#                         :, -(inference_params.window_size - 1 - inference_params.keep_first) :, ...
-#                     ].clone()
-#                     inference_params.real_sequence_len_offset = inference_params.sequence_len_offset
-#                     inference_params.sequence_len_offset = inference_params.window_size - 1
-
-#                     kv = update_kv_cache(kv, inference_params, self.layer_idx)
-
-#                     inference_params.sequence_len_offset = inference_params.real_sequence_len_offset
-#                 else:
-#                     kv = update_kv_cache(kv, inference_params, self.layer_idx)
-#             else:
-#                 kv = update_kv_cache(kv, inference_params, self.layer_idx)
-
-#             # When using FP16, there is a high probability of NAN in the KV.
-#             # Since NAN cannot be removed by multiplying with and 0, it needs
-#             # to be removed manually here.
-#             kv = torch.where(torch.isnan(kv), 0, kv)
-
-#             if hasattr(inference_params, "attention_mask") and inference_params.attention_mask is not None:
-#                 assert self.use_cuda_flash_attn is True
-#                 from flash_attn.flash_attn_interface import FlashAttnVarlenKVPackedFunc
-
-#                 if inference_params.sequence_len_offset == 0:  # First entrance, attnmask (bs*seqlen*seqlen)
-#                     attn_mask = inference_params.attention_mask[:, None, ...]
-#                     attn_mask = torch.logical_or(
-#                         torch.ones_like(attn_mask, dtype=torch.bool).triu(diagonal=1), attn_mask
-#                     )
-#                     attn_mask4flsh = ~attn_mask[:, :, -1, :].view(bsz, -1)
-#                     cu_seqlens = torch.concat(
-#                         [
-#                             torch.tensor([0], dtype=torch.int32, device=attn_mask4flsh.device),
-#                             attn_mask4flsh.sum(dim=-1).to(dtype=torch.int32),
-#                         ],
-#                         dim=0,
-#                     )
-#                     cu_seqlens = cu_seqlens.cumsum(dim=0, dtype=torch.int32)
-#                     max_seqlen_q = attn_mask4flsh.shape[-1]
-#                     max_seqlen_k = attn_mask4flsh.shape[-1]
-#                     total_q = q.masked_select(attn_mask4flsh.view(bsz, -1, 1, 1)).view(-1, q.shape[-2], q.shape[-1])
-#                     total_kv = kv.masked_select(attn_mask4flsh.view(bsz, -1, 1, 1, 1)).view(
-#                         -1, kv.shape[-3], kv.shape[-2], kv.shape[-1]
-#                     )
-
-#                     # if self.dtype is torch.float32:
-#                     #     if total_q.dtype not in [torch.float16, torch.bfloat16]:
-#                     #         total_q = total_q.to(torch.bfloat16)
-#                     #     if total_kv.dtype not in [torch.float16, torch.bfloat16]:
-#                     #         total_kv = total_kv.to(torch.bfloat16)
-#                     #     with internlm_accelerator.amp.autocast(dtype=torch.bfloat16):
-#                     #         output = FlashAttnVarlenKVPackedFunc.apply(
-#                     #             total_q,
-#                     #             total_kv,
-#                     #             cu_seqlens,
-#                     #             cu_seqlens,
-#                     #             max_seqlen_q,
-#                     #             max_seqlen_k,
-#                     #             0.0,
-#                     #             None,
-#                     #             True,
-#                     #             False,
-#                     #         ).to(self.dtype)
-#                     # else:
-#                     output = FlashAttnVarlenKVPackedFunc.apply(
-#                         total_q,
-#                         total_kv,
-#                         cu_seqlens,
-#                         cu_seqlens,
-#                         max_seqlen_q,
-#                         max_seqlen_k,
-#                         0.0,
-#                         None,
-#                         True,
-#                         False,
-#                     )
-
-#                     context = torch.zeros_like(q)
-#                     context = context.masked_scatter_(attn_mask4flsh.view(bsz, -1, 1, 1), output)
-
-#                 else:
-#                     attn_mask = inference_params.attention_mask[:, -1, :].view(bsz, 1, 1, -1)
-#                     if hasattr(inference_params, "window_size") and inference_params.window_size is not None:
-#                         if inference_params.window_size <= inference_params.sequence_len_offset:
-#                             attn_mask = torch.concat(
-#                                 [
-#                                     attn_mask[..., : inference_params.keep_first],
-#                                     attn_mask[..., -(inference_params.window_size - inference_params.keep_first) :],
-#                                 ],
-#                                 dim=-1,
-#                             )
-
-#                     k, v = torch.chunk(kv, 2, dim=2)
-#                     k = k.squeeze(2)
-#                     v = v.squeeze(2)
-#                     sp = k.shape
-#                     expansion = q.size(2) // k.size(2)
-#                     scores = torch.einsum(
-#                         "blhd,bnhd->bhln",
-#                         q,
-#                         k.unsqueeze(3).expand(-1, -1, -1, expansion, -1).reshape(sp[0], sp[1], q.size(2), sp[3]),
-#                     ) / math.sqrt(q.size(-1))
-#                     scores = scores.masked_fill(attn_mask, -65000.0)
-#                     scores = F.softmax(scores, dim=-1)  # bsz x h x L x L
-#                     context = torch.einsum(
-#                         "bhmn,bnhd->bmhd",
-#                         scores,
-#                         v.unsqueeze(3).expand(-1, -1, -1, expansion, -1).reshape(sp[0], sp[1], q.size(2), sp[3]),
-#                     )
-#             else:
-#                 # if self.dtype is torch.float32 and self.use_cuda_flash_attn:
-#                 #     if q.dtype not in [torch.float16, torch.bfloat16]:
-#                 #         q = q.to(torch.bfloat16)
-#                 #     if kv.dtype not in [torch.float16, torch.bfloat16]:
-#                 #         kv = kv.to(torch.bfloat16)
-#                 #     with internlm_accelerator.amp.autocast(dtype=torch.bfloat16):
-#                 #         context = self.inner_cross_attn(q, kv, causal=True).to(self.dtype)
-#                 # else:
-#                 context = self.inner_cross_attn(q, kv, causal=True)
-
-
-# GQA, qkv packed, inference, w/o wqkv and wo
-# assert self.rotary_emb_dim > 0
-#         if hasattr(inference_params, "attention_mask") and inference_params.attention_mask is not None:
-#             empties = inference_params.attention_mask[..., -1].sum(dim=-1)
-#             if inference_params.sequence_len_offset == 0:
-#                 q = self.rotary_emb(
-#                     q, offsets=0, cache_type="query", left_padding_mask=inference_params.attention_mask
-#                 )
-#                 k = self.rotary_emb(
-#                     k, offsets=0, cache_type="key", left_padding_mask=inference_params.attention_mask
-#                 )
-#             else:
-#                 q = q.squeeze(1)
-#                 k = k.squeeze(1)
-#                 q = self.rotary_emb(
-#                     q,
-#                     inference_params.sequence_len_offset * torch.ones(q.size(0), dtype=torch.int, device=q.device)
-#                     - empties,
-#                     cache_type="query",
-#                 ).unsqueeze(1)
-#                 k = self.rotary_emb(
-#                     k,
-#                     inference_params.sequence_len_offset * torch.ones(k.size(0), dtype=torch.int, device=k.device)
-#                     - empties,
-#                     cache_type="key",
-#                 ).unsqueeze(1)
-#         else:
-#             raise NotImplementedError(
-#                 "You should make sure you are aware that you are changing the method of generating."
-#                 "According to your generation function instead of inference/seq_generator_module.py, "
-#                 "You may implement here for normal running."
-#             )
-
-#         kv = torch.stack([k, v], dim=2)
-
-#         assert self.layer_idx is not None, "Generation requires layer_idx in the constructor"
-#         if hasattr(inference_params, "window_size") and inference_params.window_size is not None:
-#             if inference_params.window_size <= inference_params.sequence_len_offset:
-#                 assert kv.size(1) == 1, "update kv lenth more than 1"
-#                 inference_params.key_value_memory_dict[self.layer_idx][
-#                     :, inference_params.keep_first : inference_params.window_size - 1, ...
-#                 ] = inference_params.key_value_memory_dict[self.layer_idx][
-#                     :, -(inference_params.window_size - 1 - inference_params.keep_first) :, ...
-#                 ].clone()
-#                 inference_params.real_sequence_len_offset = inference_params.sequence_len_offset
-#                 inference_params.sequence_len_offset = inference_params.window_size - 1
-
-#                 kv = update_kv_cache(kv, inference_params, self.layer_idx)
-
-#                 inference_params.sequence_len_offset = inference_params.real_sequence_len_offset
-#             else:
-#                 kv = update_kv_cache(kv, inference_params, self.layer_idx)
-#         else:
-#             kv = update_kv_cache(kv, inference_params, self.layer_idx)
-
-#         # When using FP16, there is a high probability of NAN in the KV.
-#         # Since NAN cannot be removed by multiplying with and 0, it needs
-#         # to be removed manually here.
-#         kv = torch.where(torch.isnan(kv), 0, kv)
-
-#         if hasattr(inference_params, "attention_mask") and inference_params.attention_mask is not None:
-#             assert self.use_cuda_flash_attn is True
-#             from flash_attn import flash_attn_varlen_kvpacked_func
-
-#             if inference_params.sequence_len_offset == 0:  # First entrance, attnmask (bs*seqlen*seqlen)
-#                 attn_mask = inference_params.attention_mask[:, None, ...]
-#                 attn_mask = torch.logical_or(
-#                     torch.ones_like(attn_mask, dtype=torch.bool).triu(diagonal=1), attn_mask
-#                 )
-#                 attn_mask4flsh = ~attn_mask[:, :, -1, :].view(bsz, -1)
-#                 cu_seqlens = torch.concat(
-#                     [
-#                         torch.tensor([0], dtype=torch.int32, device=attn_mask4flsh.device),
-#                         attn_mask4flsh.sum(dim=-1).to(dtype=torch.int32),
-#                     ],
-#                     dim=0,
-#                 )
-#                 cu_seqlens = cu_seqlens.cumsum(dim=0, dtype=torch.int32)
-#                 max_seqlen_q = attn_mask4flsh.shape[-1]
-#                 max_seqlen_k = attn_mask4flsh.shape[-1]
-#                 total_q = q.masked_select(attn_mask4flsh.view(bsz, -1, 1, 1)).view(-1, q.shape[-2], q.shape[-1])
-#                 total_kv = kv.masked_select(attn_mask4flsh.view(bsz, -1, 1, 1, 1)).view(
-#                     -1, kv.shape[-3], kv.shape[-2], kv.shape[-1]
-#                 )
-#                 if self.dtype is torch.float32:
-#                     if total_q.dtype not in [torch.float16, torch.bfloat16]:
-#                         total_q = total_q.to(torch.bfloat16)
-#                     if total_kv.dtype not in [torch.float16, torch.bfloat16]:
-#                         total_kv = total_kv.to(torch.bfloat16)
-#                     with internlm_accelerator.amp.autocast(dtype=torch.bfloat16):
-#                         output = flash_attn_varlen_kvpacked_func(
-#                             q=total_q,
-#                             kv=total_kv,
-#                             cu_seqlens_q=cu_seqlens,
-#                             cu_seqlens_k=cu_seqlens,
-#                             max_seqlen_q=max_seqlen_q,
-#                             max_seqlen_k=max_seqlen_k,
-#                             dropout_p=0.0,
-#                             causal=True,
-#                         ).to(self.dtype)
-#                 else:
-#                     output = flash_attn_varlen_kvpacked_func(
-#                         q=total_q,
-#                         kv=total_kv,
-#                         cu_seqlens_q=cu_seqlens,
-#                         cu_seqlens_k=cu_seqlens,
-#                         max_seqlen_q=max_seqlen_q,
-#                         max_seqlen_k=max_seqlen_k,
-#                         dropout_p=0.0,
-#                         causal=True,
-#                     )
-
-#                 context = torch.zeros_like(q)
-#                 context = context.masked_scatter_(attn_mask4flsh.view(bsz, -1, 1, 1), output)
-
-#             else:
-#                 attn_mask = inference_params.attention_mask[:, -1, :].view(bsz, 1, 1, -1)
-#                 if hasattr(inference_params, "window_size") and inference_params.window_size is not None:
-#                     if inference_params.window_size <= inference_params.sequence_len_offset:
-#                         attn_mask = torch.concat(
-#                             [
-#                                 attn_mask[..., : inference_params.keep_first],
-#                                 attn_mask[..., -(inference_params.window_size - inference_params.keep_first) :],
-#                             ],
-#                             dim=-1,
-#                         )
-
-#                 k, v = torch.chunk(kv, 2, dim=2)
-#                 k = k.squeeze(2)
-#                 v = v.squeeze(2)
-#                 sp = k.shape
-#                 expansion = q.size(2) // k.size(2)
-#                 scores = torch.einsum(
-#                     "blhd,bnhd->bhln",
-#                     q,
-#                     k.unsqueeze(3).expand(-1, -1, -1, expansion, -1).reshape(sp[0], sp[1], q.size(2), sp[3]),
-#                 ) / math.sqrt(q.size(-1))
-#                 scores = scores.masked_fill(attn_mask, -65000.0)
-#                 scores = F.softmax(scores, dim=-1)  # bsz x h x L x L
-#                 context = torch.einsum(
-#                     "bhmn,bnhd->bmhd",
-#                     scores,
-#                     v.unsqueeze(3).expand(-1, -1, -1, expansion, -1).reshape(sp[0], sp[1], q.size(2), sp[3]),
-#                 )
-#         else:
-#             if self.dtype is torch.float32 and self.use_cuda_flash_attn:
-#                 if q.dtype not in [torch.float16, torch.bfloat16]:
-#                     q = q.to(torch.bfloat16)
-#                 if kv.dtype not in [torch.float16, torch.bfloat16]:
-#                     kv = kv.to(torch.bfloat16)
-#                 with internlm_accelerator.amp.autocast(dtype=torch.bfloat16):
-#                     context = self.inner_cross_attn(q, kv, causal=True).to(self.dtype)
-#             else:
-#                 context = self.inner_cross_attn(q, kv, causal=True)
-
-
-def _convert_cu_seqlens_for_qksplited(kwargs):
+def _convert_cu_seqlens_for_qksplited(kwargs: Dict):
     cu_seqlens = kwargs.pop("cu_seqlens", None)
     max_seqlen = kwargs.pop("max_seqlen", None)
 
@@ -610,13 +121,10 @@ class MHA(nn.Module):
         self._register_state_dict_hook(pre_save_hook)
 
     def forward(self, x, inference_params=None, **kwargs):
-        if inference_params is not None:
-            return self._inference(x=x, inference_params=inference_params, **kwargs)
-        else:
+        if inference_params is None:
             return self._training(x=x, **kwargs)
-
-    def _inference(self, x, inference_params, **kwargs):
-        assert False, "NYI"
+        else:
+            return self._inference(x=x, inference_params=inference_params, **kwargs)
 
     def _training(self, x, **kwargs):
         # wqkv
@@ -624,8 +132,8 @@ class MHA(nn.Module):
             qkv = self.wqkv(x)
             qkv = rearrange(qkv, "b s (three h d) -> b s three h d", three=3, d=self.head_dim)
 
-            q = qkv[..., 0, :, :].squeeze(2)
-            k = qkv[..., 1, :, :].squeeze(2)
+            q = qkv[:, :, 0].squeeze(2)
+            k = qkv[:, :, 1].squeeze(2)
         else:
             q, k, v = self.wq(x), self.wk(x), self.wv(x)
             q = rearrange(q, "b s (h d) -> b s h d", d=self.head_dim)
@@ -645,10 +153,143 @@ class MHA(nn.Module):
             kwargs = _convert_cu_seqlens_for_qksplited(kwargs)
             context = self.inner_attn(q, k, v, **kwargs)
 
-        context = rearrange(context, "b s h d -> b s (h d)")
+        # wo
+        return self.out_proj(rearrange(context, "b s h d -> b s (h d)"))
+
+    def _convert_unpacked_qkv_to_packed(
+        self, q: torch.Tensor, kv: torch.Tensor, batch_size: int, attention_mask: torch.Tensor
+    ):
+        cu_seqlens = torch.concat(
+            [
+                torch.tensor([0], dtype=torch.int32, device=attention_mask.device),
+                attention_mask.sum(dim=-1).to(dtype=torch.int32),
+            ],
+            dim=0,
+        ).cumsum(dim=0, dtype=torch.int32)
+
+        cu_seqlens_q = cu_seqlens
+        cu_seqlens_k = cu_seqlens
+
+        max_seqlen_q = attention_mask.shape[-1]
+        max_seqlen_k = attention_mask.shape[-1]
+
+        q_packed = q.masked_select(attention_mask.view(batch_size, -1, 1, 1)).view(-1, q.shape[-2], q.shape[-1])
+        kv_packed = kv.masked_select(attention_mask.view(batch_size, -1, 1, 1, 1)).view(
+            -1, kv.shape[-3], kv.shape[-2], kv.shape[-1]
+        )
+
+        return q_packed, kv_packed, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k
+
+    def _inference(self, x, inference_params, **kwargs):
+        assert inference_params is not None, "inference_params is required for inference"
+        assert self.layer_idx is not None, "Generation requires layer_idx in the constructor"
+        attention_mask = inference_params.get("attention_mask", None)
+        sequence_len_offset = inference_params.get("sequence_len_offset", 0)
+        batch_size = x.shape[0]
+
+        # wqkv, output: q, kv
+        if self.enable_qkv_fusion:
+            qkv = self.wqkv(x)
+            qkv = rearrange(qkv, "b s (three h d) -> b s three h d", three=3, d=self.head_dim)
+
+            q = qkv[:, :, 0].squeeze(2)
+            kv = qkv[:, :, 1:]
+        else:
+            q, k, v = self.wq(x), self.wk(x), self.wv(x)
+            q = rearrange(q, "b s (h d) -> b s h d", d=self.head_dim)
+            k = rearrange(k, "b s (h d) -> b s h d", d=self.head_dim)
+            v = rearrange(v, "b s (h d) -> b s h d", d=self.head_dim)
+            kv = torch.stack([k, v], dim=2)
+
+        # rotary embedding, output: q, kv
+        # q shape: [bsz, nheads, head_dim]
+        # kv shape: [bsz, seqlen, 2, nheads, head_dim]
+        if self.use_dynamic_ntk_rope:
+            # update kv cache fisrt when enable dynamic ntk rope.
+            kv = update_kv_cache(kv, inference_params, self.layer_idx)
+
+            if sequence_len_offset != 0:
+                if sequence_len_offset > self.max_position_embeddings:
+                    logger.warning(
+                        "Notice your prompt's length is longer than model's max_position_embeddings: "
+                        + "%s, which will cause deviations in dynamic ntk calculations.",
+                        self.max_position_embeddings,
+                    )
+
+                if self.rotary_emb_dim > 0:
+                    q = self.rotary_emb(q, offsets=sequence_len_offset, cache_type="query")
+                    k = kv[:, :, 0].squeueze(2)
+                    self.rotary_emb(k, offsets=0, cache_type="key", in_place=True)  # in-place is important
+            else:
+                if self.rotary_emb_dim > 0:
+                    q = self.rotary_emb(q, offsets=0, cache_type="query")
+                    k = kv[:, :, 0].squeueze(2)
+                    self.rotary_emb(k, offsets=0, cache_type="key", in_place=True)  # in-place is important
+        else:
+            assert self.rotary_emb_dim > 0, "You should use rotary_emb."
+
+            k, v = kv[:, :, 0].squeueze(2), kv[:, :, 1].squeueze(2)
+
+            if attention_mask is None:
+                q = self.rotary_emb(q, offsets=sequence_len_offset, cache_type="query")
+                k = self.rotary_emb(k, offsets=sequence_len_offset, cache_type="key")
+            else:
+                if sequence_len_offset == 0:
+                    q = self.rotary_emb(q, offsets=0, cache_type="query", left_padding_mask=attention_mask)
+                    k = self.rotary_emb(k, offsets=0, cache_type="key", left_padding_mask=attention_mask)
+                else:
+                    if sequence_len_offset > self.max_position_embeddings:
+                        logger.warning(
+                            "Notice your prompt's length is longer than model's max_position_embeddings: "
+                            + "%s, which will cause deviations in dynamic ntk calculations.",
+                            self.max_position_embeddings,
+                        )
+
+                    empties = attention_mask[..., -1].sum(dim=-1)
+                    indexes4q = sequence_len_offset * torch.ones(q.size(0), dtype=torch.int, device=q.device) - empties
+                    indexes4k = sequence_len_offset * torch.ones(k.size(0), dtype=torch.int, device=k.device) - empties
+                    q = self.rotary_emb(q, offsets=indexes4q, cache_type="query")
+                    k = self.rotary_emb(k, offsets=indexes4k, cache_type="key")
+
+            kv = torch.stack([k, v], dim=2)
+            # update kv cache after rotary embedding when disable dynamic ntk rope.
+            kv = update_kv_cache(kv, inference_params, self.layer_idx)
+
+        # self-attention
+        if attention_mask is None:
+            context = self.inner_cross_attn(q, kv)
+        else:
+            if sequence_len_offset == 0:  # First entrance, attnmask (bs*seqlen*seqlen)
+                attn_mask = attention_mask[:, None, ...]
+                attn_mask = torch.logical_or(torch.ones_like(attn_mask, dtype=torch.bool).triu(diagonal=1), attn_mask)
+                attn_mask4flsh = ~attn_mask[:, :, -1, :].view(batch_size, -1)
+
+                output = self.inner_attn(*self._convert_unpacked_qkv_to_packed(q, kv, batch_size, attn_mask4flsh))
+                output = output.to(x.dtype)
+
+                context = torch.zeros_like(q).masked_scatter_(attn_mask4flsh.view(batch_size, -1, 1, 1), output)
+            else:
+                attn_mask = attention_mask[:, -1, :].view(batch_size, 1, 1, -1)
+
+                k, v = torch.chunk(kv, 2, dim=2)
+                k = k.squeeze(2)
+                v = v.squeeze(2)
+                sp = k.shape
+                scores = torch.einsum(
+                    "blhd,bnhd->bhln",
+                    q,
+                    k.reshape(sp[0], sp[1], q.size(2), sp[3]),
+                ) / math.sqrt(q.size(-1))
+                scores = scores.masked_fill(attn_mask, -65000.0)
+                scores = F.softmax(scores, dim=-1)  # bsz x h x L x L
+                context = torch.einsum(
+                    "bhmn,bnhd->bmhd",
+                    scores,
+                    v.reshape(sp[0], sp[1], q.size(2), sp[3]),
+                )
 
         # wo
-        return self.out_proj(context)
+        return self.out_proj(rearrange(context, "b s h d -> b s (h d)"))
 
 
 class GQA(nn.Module):
@@ -749,13 +390,10 @@ class GQA(nn.Module):
         self._register_state_dict_hook(pre_save_hook)
 
     def forward(self, x, inference_params=None, **kwargs):
-        if inference_params is not None:
-            return self._inference(x=x, inference_params=inference_params, **kwargs)
-        else:
+        if inference_params is None:
             return self._training(x=x, **kwargs)
-
-    def _inference(self, x, inference_params, **kwargs):
-        assert False, "NYI"
+        else:
+            return self._inference(x=x, inference_params=inference_params, **kwargs)
 
     def _training(self, x, **kwargs):
         """
@@ -796,7 +434,144 @@ class GQA(nn.Module):
 
         # self attention
         context = self.inner_attn(q, kv, **kwargs)
-        context = rearrange(context, "b s h d -> b s (h d)")
 
         # wo
-        return self.wo(context)
+        return self.wo(rearrange(context, "b s h d -> b s (h d)"))
+
+    def _convert_unpacked_qkv_to_packed(
+        self, q: torch.Tensor, kv: torch.Tensor, batch_size: int, attention_mask: torch.Tensor
+    ):
+        cu_seqlens = torch.concat(
+            [
+                torch.tensor([0], dtype=torch.int32, device=attention_mask.device),
+                attention_mask.sum(dim=-1).to(dtype=torch.int32),
+            ],
+            dim=0,
+        ).cumsum(dim=0, dtype=torch.int32)
+
+        cu_seqlens_q = cu_seqlens
+        cu_seqlens_k = cu_seqlens
+
+        max_seqlen_q = attention_mask.shape[-1]
+        max_seqlen_k = attention_mask.shape[-1]
+
+        q_packed = q.masked_select(attention_mask.view(batch_size, -1, 1, 1)).view(-1, q.shape[-2], q.shape[-1])
+        kv_packed = kv.masked_select(attention_mask.view(batch_size, -1, 1, 1, 1)).view(
+            -1, kv.shape[-3], kv.shape[-2], kv.shape[-1]
+        )
+
+        return q_packed, kv_packed, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k
+
+    def _inference(self, x, inference_params, **kwargs):
+        assert inference_params is not None, "inference_params is required for inference"
+        assert self.layer_idx is not None, "Generation requires layer_idx in the constructor"
+        attention_mask = inference_params.get("attention_mask", None)
+        sequence_len_offset = inference_params.get("sequence_len_offset", 0)
+        window_size = inference_params.get("window_size", None)
+
+        batch_size = x.shape[0]
+
+        # wqkv, output: q, k, v
+        if self.enable_qkv_fusion:
+            qkv = self.wqkv(x)
+            qkv = rearrange(qkv, "b s (h gs d) -> b s h gs d", gs=self.q_per_kv + 2, d=self.head_dim)
+            q, k, v = (qkv[..., : self.q_per_kv, :], qkv[..., -2, :].unsqueeze(-2), qkv[..., -1, :].unsqueeze(-2))
+            q = rearrange(q, "b s h gs d -> b s (h gs) d")
+        else:
+            q, k, v = self.wq(x), self.wk(x), self.wv(x)
+            q = rearrange(q, "b s (h d) -> b s h d", d=self.head_dim)
+            k = rearrange(k, "b s (h d) -> b s h d", d=self.head_dim)
+            v = rearrange(v, "b s (h d) -> b s h d", d=self.head_dim)
+
+        if not self.rot_embed_HF_impl:
+            q = torch.cat([q[..., ::2], q[..., 1::2]], dim=-1)
+            k = torch.cat([k[..., ::2], k[..., 1::2]], dim=-1)
+
+        # rotary embedding, output: q, kv
+        assert self.rotary_emb_dim > 0
+        if attention_mask is None:
+            raise NotImplementedError(
+                "You should make sure you are aware that you are changing the method of generating."
+                "According to your generation function instead of inference/seq_generator_module.py, "
+                "You may implement here for normal running."
+            )
+        else:
+            if inference_params.sequence_len_offset == 0:
+                q = self.rotary_emb(q, offsets=0, cache_type="query", left_padding_mask=attention_mask)
+                k = self.rotary_emb(k, offsets=0, cache_type="key", left_padding_mask=attention_mask)
+            else:
+                empties = attention_mask[..., -1].sum(dim=-1)
+                indexes4q = sequence_len_offset * torch.ones(q.size(0), dtype=torch.int, device=q.device) - empties
+                indexes4k = sequence_len_offset * torch.ones(k.size(0), dtype=torch.int, device=k.device) - empties
+                q = self.rotary_emb(q, offsets=indexes4q, cache_type="query")
+                k = self.rotary_emb(k, offsets=indexes4k, cache_type="key")
+
+        kv = torch.stack([k, v], dim=2)
+
+        if window_size is None or window_size > sequence_len_offset:
+            kv = update_kv_cache(kv, inference_params, self.layer_idx)
+        else:  # window_size <= sequence_len_offset
+            assert kv.size(1) == 1, "update kv length more than 1"
+
+            inference_params.key_value_memory_dict[self.layer_idx][
+                :, inference_params.keep_first : inference_params.window_size - 1, ...
+            ] = inference_params.key_value_memory_dict[self.layer_idx][
+                :, -(inference_params.window_size - 1 - inference_params.keep_first) :, ...
+            ].clone()
+            inference_params.real_sequence_len_offset = inference_params.sequence_len_offset
+            inference_params.sequence_len_offset = inference_params.window_size - 1
+
+            kv = update_kv_cache(kv, inference_params, self.layer_idx)
+
+            inference_params.sequence_len_offset = inference_params.real_sequence_len_offset
+
+        # When using FP16, there is a high probability of NAN in the KV.
+        # Since NAN cannot be removed by multiplying with and 0, it needs
+        # to be removed manually here.
+        kv = torch.where(torch.isnan(kv), 0, kv)
+
+        # attention
+        if attention_mask is None:
+            context = self.inner_cross_attn(q, kv)
+        else:
+            if sequence_len_offset == 0:  # First entrance, attnmask (bs*seqlen*seqlen)
+                attn_mask = attention_mask[:, None, ...]
+                attn_mask = torch.logical_or(torch.ones_like(attn_mask, dtype=torch.bool).triu(diagonal=1), attn_mask)
+                attn_mask4flsh = ~attn_mask[:, :, -1, :].view(batch_size, -1)
+
+                output = self.inner_attn(*self._convert_unpacked_qkv_to_packed(q, kv, batch_size, attn_mask4flsh))
+                output = output.to(x.dtype)
+
+                context = torch.zeros_like(q).masked_scatter_(attn_mask4flsh.view(batch_size, -1, 1, 1), output)
+
+            else:
+                attn_mask = attention_mask[:, -1, :].view(batch_size, 1, 1, -1)
+                if window_size is not None and window_size <= sequence_len_offset:
+                    attn_mask = torch.concat(
+                        [
+                            attn_mask[..., : inference_params.keep_first],
+                            attn_mask[..., -(window_size - inference_params.keep_first) :],
+                        ],
+                        dim=-1,
+                    )
+
+                k, v = torch.chunk(kv, 2, dim=2)
+                k = k.squeeze(2)
+                v = v.squeeze(2)
+                sp = k.shape
+                expansion = q.size(2) // k.size(2)
+                scores = torch.einsum(
+                    "blhd,bnhd->bhln",
+                    q,
+                    k.unsqueeze(3).expand(-1, -1, -1, expansion, -1).reshape(sp[0], sp[1], q.size(2), sp[3]),
+                ) / math.sqrt(q.size(-1))
+                scores = scores.masked_fill(attn_mask, -65000.0)
+                scores = F.softmax(scores, dim=-1)  # bsz x h x L x L
+                context = torch.einsum(
+                    "bhmn,bnhd->bmhd",
+                    scores,
+                    v.unsqueeze(3).expand(-1, -1, -1, expansion, -1).reshape(sp[0], sp[1], q.size(2), sp[3]),
+                )
+
+        # wo
+        return self.wo(rearrange(context, "b s h d -> b s (h d)"))

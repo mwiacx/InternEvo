@@ -157,8 +157,10 @@ class RotaryEmbedding(torch.nn.Module):
 
             if covert_type == "left2right":
                 ret[i][: -empties[i]] = x[i][empties[i] :]
+                ret[i][empties[i] :] = x[i][: -empties[i]]
             else:  # right2left
                 ret[i][empties[i] :] = x[i][: -empties[i]]
+                ret[i][: -empties[i]] = x[i][empties[i] :]
 
         return ret
 
