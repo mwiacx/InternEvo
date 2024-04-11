@@ -469,7 +469,7 @@ class SelfAttention(nn.Module):
             return _torch_fixedlen_qkvpacked_attn(qkv, self.dropout, softmax_scale, causal, key_padding_mask)
 
     @forward.register(conditions=(str(QKVPackType.KVPACKED), str(CuSeqlenType.WithOut)))
-    def _(self, q, kv, softmax_scale=None, causal=False, key_padding_mask=None):
+    def _(self, q, kv, softmax_scale=None, causal=None, key_padding_mask=None):
         softmax_scale = self.softmax_scale if softmax_scale is None else softmax_scale
         causal = self.causal if causal is None else causal
 
@@ -486,7 +486,7 @@ class SelfAttention(nn.Module):
             return _torch_fixedlen_kvpacked_attn(q, kv, self.dropout, softmax_scale, causal, key_padding_mask)
 
     @forward.register(conditions=(str(QKVPackType.QKVSPLITED), str(CuSeqlenType.WithOut)))
-    def _(self, q, k, v, softmax_scale=None, causal=False, key_padding_mask=None):
+    def _(self, q, k, v, softmax_scale=None, causal=None, key_padding_mask=None):
         softmax_scale = self.softmax_scale if softmax_scale is None else softmax_scale
         causal = self.causal if causal is None else causal
 
@@ -509,7 +509,7 @@ class SelfAttention(nn.Module):
         cu_seqlens,
         max_seqlen,
         softmax_scale=None,
-        causal=False,
+        causal=None,
         key_padding_mask=None,
     ):
         softmax_scale = self.softmax_scale if softmax_scale is None else softmax_scale
@@ -541,7 +541,7 @@ class SelfAttention(nn.Module):
         max_seqlen_q,
         max_seqlen_k,
         softmax_scale=None,
-        causal=False,
+        causal=None,
         key_padding_mask=None,
     ):
         softmax_scale = self.softmax_scale if softmax_scale is None else softmax_scale
@@ -587,7 +587,7 @@ class SelfAttention(nn.Module):
         max_seqlen_q,
         max_seqlen_k,
         softmax_scale=None,
-        causal=False,
+        causal=None,
         key_padding_mask=None,
     ):
         softmax_scale = self.softmax_scale if softmax_scale is None else softmax_scale
@@ -685,7 +685,7 @@ class CrossAttention(nn.Module):
         assert False, "Never arrive here"
 
     @forward.register(conditions=(str(QKVPackType.KVPACKED), str(CuSeqlenType.WithOut)))
-    def _(self, q, kv, softmax_scale=None, causal=False, key_padding_mask=None):
+    def _(self, q, kv, softmax_scale=None, causal=None, key_padding_mask=None):
         softmax_scale = self.softmax_scale if softmax_scale is None else softmax_scale
         causal = self.causal if causal is None else causal
 
@@ -702,7 +702,7 @@ class CrossAttention(nn.Module):
             return _torch_fixedlen_kvpacked_attn(q, kv, self.dropout, softmax_scale, causal, key_padding_mask)
 
     @forward.register(conditions=(str(QKVPackType.QKVSPLITED), str(CuSeqlenType.WithOut)))
-    def _(self, q, k, v, softmax_scale=None, causal=False, key_padding_mask=None):
+    def _(self, q, k, v, softmax_scale=None, causal=None, key_padding_mask=None):
         softmax_scale = self.softmax_scale if softmax_scale is None else softmax_scale
         causal = self.causal if causal is None else causal
 
@@ -728,7 +728,7 @@ class CrossAttention(nn.Module):
         max_seqlen_q,
         max_seqlen_k,
         softmax_scale=None,
-        causal=False,
+        causal=None,
         key_padding_mask=None,
     ):
         softmax_scale = self.softmax_scale if softmax_scale is None else softmax_scale
@@ -774,7 +774,7 @@ class CrossAttention(nn.Module):
         max_seqlen_q,
         max_seqlen_k,
         softmax_scale=None,
-        causal=False,
+        causal=None,
         key_padding_mask=None,
     ):
         softmax_scale = self.softmax_scale if softmax_scale is None else softmax_scale
