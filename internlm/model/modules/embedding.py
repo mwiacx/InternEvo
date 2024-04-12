@@ -28,7 +28,6 @@ class Embedding1D(nn.Module):
                             therefore, the embedding vector at :attr:`padding_idx` is not updated during training,
                             i.e. it remains as a fixed "pad". None by default.
         dtype (Optional[torch.dtype]): Data type None by default.
-
     """
 
     def __init__(
@@ -104,7 +103,7 @@ class RotaryEmbedding(torch.nn.Module):
     def _update_cos_sin_cache(
         self, x: torch.Tensor, indexes: Union[int, torch.Tensor] = 0, max_seqlen: Optional[int] = None
     ):
-        """x: (batch, seqlen, nheads, headdim) or (batch, seqlen, 3, nheads, headdim)"""
+        """x: (batch, seqlen, nheads, headdim)"""
         if max_seqlen is not None:
             seqlen = max_seqlen
         elif isinstance(indexes, int):
@@ -174,7 +173,21 @@ class RotaryEmbedding(torch.nn.Module):
         in_place: bool = False,
         left_padding_mask: Optional[torch.Tensor] = None,
     ):
-        # assert self.scale is None
+        """
+        Applies rotary position embeddings to the input tensor.
+
+        Args:
+            x (torch.Tensor): The input tensor.
+            offsets (Union[int, torch.Tensor], optional): The sequence offsets for the input. Defaults to 0.
+            max_seqlen (Optional[int], optional): The maximum sequence length for caching. Defaults to None.
+            cache_type (str, optional): Specifies whether the cache is for 'query' or 'key'. Defaults to "query".
+            interleaved (bool, optional): Whether the input tensor is interleaved. Defaults to False.
+            in_place (bool, optional): Whether the operation should be done in-place. Defaults to False.
+            left_padding_mask (Optional[torch.Tensor], optional): A mask for left padding. Defaults to None.
+
+        Returns:
+            torch.Tensor: The tensor with applied rotary position embeddings.
+        """
         assert cache_type in ("query", "key"), f"Unknown cache type {cache_type}"
         assert isinstance(offsets, (int, torch.Tensor)), f"Invalid offsets type {type(offsets)}"
 
@@ -212,7 +225,7 @@ class LinearRotaryEmbedding(RotaryEmbedding):
         self.scaling_factor = scaling_factor
 
     def _update_cos_sin_cache(self, x, indexes):
-        """x: (batch, seqlen, nheads, headdim) or (batch, seqlen, 3, nheads, headdim)"""
+        """x: (batch, seqlen, nheads, headdim)"""
         if not isinstance(indexes, int):
             seqlen = indexes.max().item() + 1
         else:
@@ -279,7 +292,7 @@ class DynamicNTKScalingRotaryEmbedding(RotaryEmbedding):
             self._sin_k_cached = (torch.sin(freqs) / scale).to(x.dtype)
 
     def _update_cos_sin_cache(self, x, indexes):
-        """x: (batch, seqlen, nheads, headdim) or (batch, seqlen, 3, nheads, headdim)"""
+        """x: (batch, seqlen, nheads, headdim)"""
         if not isinstance(indexes, int):
             seqlen = indexes.max().item() + 1
         else:

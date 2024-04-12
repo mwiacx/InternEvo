@@ -166,8 +166,6 @@ def _flash_varlen_qkvsplited_attn(
 ):
     # compatible data format: [1, packelen, 3, n_head, headim]
     q, k, v = q.squeeze(dim=0), k.squeeze(dim=0), v.squeeze(dim=0)
-    # cu_seqlens_q = cu_seqlens_q[0].to(q.device).squeeze(dim=0)
-    # cu_seqlens_k = cu_seqlens_k[0].to(q.device).squeeze(dim=0)
 
     # input_idxs: 0: q, 1: k, 2: v
     output = _flash_float32_compatibility_wrapper(
@@ -420,14 +418,17 @@ def _torch_fixedlen_qkvsplited_attn(
 
 @auto_wrap_distributed_attention
 class SelfAttention(nn.Module):
-    """Implement the scaled dot product attention with softmax.
-    Arguments
-    ---------
-        softmax_scale: The temperature to use for the softmax attention.
-                      (default: 1/sqrt(d_keys) where d_keys is computed at
-                      runtime)
-        attention_dropout: The dropout rate to apply to the attention
-                           (default: 0.0)
+    """Implements scaled dot-product attention with optional softmax scaling.
+
+    This class implements the scaled dot-product attention mechanism, which can be optionally scaled
+    by a softmax scaling factor. It supports configurations for causal attention and applies dropout
+    to the attention scores.
+
+    Arguments:
+        causal (bool): If True, applies causal attention to mask future tokens. Defaults to False.
+        softmax_scale (Optional[float]): Scaling factor for attention scores before applying softmax.
+            Defaults to 1/sqrt(d_keys) where d_keys is the dimension of the keys, computed at runtime.
+        attention_dropout (float): Dropout rate for attention scores. Defaults to 0.0.
     """
 
     def __init__(self, causal=False, softmax_scale=None, attention_dropout=0.0):
@@ -441,18 +442,18 @@ class SelfAttention(nn.Module):
 
     @params_dispatch_with_condition(condition=check_attention_argument)
     def forward(self):
-        """Implements the multihead softmax attention.
-        Arguments
-        ---------
-            qkv: The tensor containing the query, key, and value. (B, S, 3, H, D)
-            causal: if passed, will override self.causal
-            key_padding_mask: boolean mask to apply to the attention weights. True means to keep,
-                False means to mask out. (B, S)
+        """Placeholder for multihead softmax attention implementation.
+
+        This method serves as a placeholder and should not be reached during execution. It is expected
+        to be overridden by specific implementations for different attention mechanisms.
+
+        Raises:
+            AssertionError: Always raised to indicate the method should not be called directly.
         """
         assert False, "Never arrive here"
 
     @forward.register(conditions=(str(QKVPackType.QKVPACKED), str(CuSeqlenType.WithOut)))
-    def _(self, qkv, softmax_scale=None, causal=None, key_padding_mask=None):
+    def _qkv_without_cu_seqlens(self, qkv, softmax_scale=None, causal=None, key_padding_mask=None):
         softmax_scale = self.softmax_scale if softmax_scale is None else softmax_scale
         causal = self.causal if causal is None else causal
 
@@ -464,12 +465,12 @@ class SelfAttention(nn.Module):
             elif device_backend == AcceleratorType.DIPU and deeplink_flash_attn_impl:
                 return _deeplink_fixedlne_qkvpacked_attn(qkv, self.dropout.p, softmax_scale, causal)
             else:
-                raise NotImplementedError(f"Unsupport device type: {device_backend} for flash attention")
+                raise NotImplementedError(f"Unsupported device type: {device_backend} for flash attention")
         else:
             return _torch_fixedlen_qkvpacked_attn(qkv, self.dropout, softmax_scale, causal, key_padding_mask)
 
     @forward.register(conditions=(str(QKVPackType.KVPACKED), str(CuSeqlenType.WithOut)))
-    def _(self, q, kv, softmax_scale=None, causal=None, key_padding_mask=None):
+    def _q_kv_without_cu_seqlens(self, q, kv, softmax_scale=None, causal=None, key_padding_mask=None):
         softmax_scale = self.softmax_scale if softmax_scale is None else softmax_scale
         causal = self.causal if causal is None else causal
 
@@ -481,12 +482,12 @@ class SelfAttention(nn.Module):
             elif device_backend == AcceleratorType.DIPU and deeplink_flash_attn_impl:
                 return _deeplink_fixedlen_kvpacked_attn(q, kv, self.dropout.p, softmax_scale, causal)
             else:
-                raise NotImplementedError(f"Unsupport device type: {device_backend} for flash attention")
+                raise NotImplementedError(f"Unsupported device type: {device_backend} for flash attention")
         else:
             return _torch_fixedlen_kvpacked_attn(q, kv, self.dropout, softmax_scale, causal, key_padding_mask)
 
     @forward.register(conditions=(str(QKVPackType.QKVSPLITED), str(CuSeqlenType.WithOut)))
-    def _(self, q, k, v, softmax_scale=None, causal=None, key_padding_mask=None):
+    def _q_k_v_without_cu_seqlens(self, q, k, v, softmax_scale=None, causal=None, key_padding_mask=None):
         softmax_scale = self.softmax_scale if softmax_scale is None else softmax_scale
         causal = self.causal if causal is None else causal
 
@@ -498,12 +499,12 @@ class SelfAttention(nn.Module):
             elif device_backend == AcceleratorType.DIPU and deeplink_flash_attn_impl:
                 return _deeplink_fixedlen_qkvsplited_attn(q, k, v, self.dropout.p, softmax_scale, causal)
             else:
-                raise NotImplementedError(f"Unsupport device type: {device_backend} for flash attention")
+                raise NotImplementedError(f"Unsupported device type: {device_backend} for flash attention")
         else:
             return _torch_fixedlen_qkvsplited_attn(q, k, v, self.dropout, softmax_scale, causal, key_padding_mask)
 
     @forward.register(conditions=(str(QKVPackType.QKVPACKED), str(CuSeqlenType.With)))
-    def _(
+    def _qkv_with_cu_seqlens(
         self,
         qkv,
         cu_seqlens,
@@ -525,14 +526,14 @@ class SelfAttention(nn.Module):
                     qkv, cu_seqlens, max_seqlen, self.dropout.p, softmax_scale, causal
                 )
             else:
-                raise NotImplementedError(f"Unsupport device type: {device_backend} for flash attention")
+                raise NotImplementedError(f"Unsupported device type: {device_backend} for flash attention")
         else:
             return _torch_varlen_qkvpacked_attn(
                 qkv, cu_seqlens, max_seqlen, self.dropout, softmax_scale, causal, key_padding_mask
             )
 
     @forward.register(conditions=(str(QKVPackType.KVPACKED), str(CuSeqlenType.With)))
-    def _(
+    def _q_kv_with_cu_seqlens(
         self,
         q,
         kv,
@@ -561,7 +562,7 @@ class SelfAttention(nn.Module):
                     q, kv, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k, self.dropout.p, softmax_scale, causal
                 )
             else:
-                raise NotImplementedError(f"Unsupport device type: {device_backend} for flash attention")
+                raise NotImplementedError(f"Unsupported device type: {device_backend} for flash attention")
         else:
             return _torch_varlen_kvpacked_attn(
                 q,
@@ -577,7 +578,7 @@ class SelfAttention(nn.Module):
             )
 
     @forward.register(conditions=(str(QKVPackType.QKVSPLITED), str(CuSeqlenType.With)))
-    def _(
+    def _q_k_v_with_cu_seqlens(
         self,
         q,
         k,
@@ -634,7 +635,7 @@ class SelfAttention(nn.Module):
                     causal,
                 )
             else:
-                raise NotImplementedError(f"Unsupport device type: {device_backend} for flash attention")
+                raise NotImplementedError(f"Unsupported device type: {device_backend} for flash attention")
         else:
             return _torch_varlen_qkvsplited_attn(
                 q,
@@ -653,39 +654,45 @@ class SelfAttention(nn.Module):
 
 @auto_wrap_distributed_attention
 class CrossAttention(nn.Module):
-    """Implement the scaled dot product attention with softmax.
-    Arguments
-    ---------
-        softmax_scale: The temperature to use for the softmax attention.
-                      (default: 1/sqrt(d_keys) where d_keys is computed at
-                      runtime)
-        attention_dropout: The dropout rate to apply to the attention
-                           (default: 0.0)
+    """Implements scaled dot product attention with softmax.
+
+    This class provides the functionality for cross attention mechanism using scaled dot product attention
+    with optional softmax scaling and dropout for attention weights.
+
+    Arguments:
+        causal (bool): If True, applies causality to prevent tokens from attending to future tokens. Default is False.
+        softmax_scale (float, optional): The scaling factor to apply to the dot products before softmax. If None,
+            it defaults to 1/sqrt(d_keys) where d_keys is the dimension of the keys, computed at runtime.
+        attention_dropout (float): The dropout rate to apply to the attention.
+
+    Raises:
+        AssertionError: If `device_backend` is NPU and `causal` is False, since Ascend flash attention does not
+            support non-causal attention yet.
     """
 
     def __init__(self, causal=False, softmax_scale=None, attention_dropout=0.0):
         super().__init__()
         self.causal = causal
         self.softmax_scale = softmax_scale
-        self.drop = nn.Dropout(attention_dropout)
+        self.dropout = nn.Dropout(attention_dropout)
 
         if device_backend == AcceleratorType.NPU:
-            assert self.causal, "Ascend flash attention does not spport causal=False yet!"
+            assert self.causal, "Ascend flash attention does not support causal=False yet!"
 
     @params_dispatch_with_condition(condition=check_attention_argument)
     def forward(self, obj: object):
-        """Implements the multihead softmax attention.
-        Arguments
-        ---------
-            qkv: The tensor containing the query, key, and value. (B, S, 3, H, D)
-            causal: if passed, will override self.causal
-            key_padding_mask: boolean mask to apply to the attention weights. True means to keep,
-                False means to mask out. (B, S)
+        """Placeholder for cross attention implementation.
+
+        This method is a placeholder and should not be reached in execution as it is expected to be
+        overridden by specific implementations for different attention parameters.
+
+        Raises:
+            AssertionError: Always raised to indicate the method should not be called directly.
         """
         assert False, "Never arrive here"
 
     @forward.register(conditions=(str(QKVPackType.KVPACKED), str(CuSeqlenType.WithOut)))
-    def _(self, q, kv, softmax_scale=None, causal=None, key_padding_mask=None):
+    def _q_kv_without_cu_seqlens(self, q, kv, softmax_scale=None, causal=None, key_padding_mask=None):
         softmax_scale = self.softmax_scale if softmax_scale is None else softmax_scale
         causal = self.causal if causal is None else causal
 
@@ -697,12 +704,12 @@ class CrossAttention(nn.Module):
             elif device_backend == AcceleratorType.DIPU and deeplink_flash_attn_impl:
                 return _deeplink_fixedlen_kvpacked_attn(q, kv, self.dropout.p, softmax_scale, causal)
             else:
-                raise NotImplementedError(f"Unsupport device type: {device_backend} for flash attention")
+                raise NotImplementedError(f"Unsupported device type: {device_backend} for flash attention")
         else:
             return _torch_fixedlen_kvpacked_attn(q, kv, self.dropout, softmax_scale, causal, key_padding_mask)
 
     @forward.register(conditions=(str(QKVPackType.QKVSPLITED), str(CuSeqlenType.WithOut)))
-    def _(self, q, k, v, softmax_scale=None, causal=None, key_padding_mask=None):
+    def _q_k_v_without_cu_seqlens(self, q, k, v, softmax_scale=None, causal=None, key_padding_mask=None):
         softmax_scale = self.softmax_scale if softmax_scale is None else softmax_scale
         causal = self.causal if causal is None else causal
 
@@ -714,12 +721,12 @@ class CrossAttention(nn.Module):
             elif device_backend == AcceleratorType.DIPU and deeplink_flash_attn_impl:
                 return _deeplink_fixedlen_qkvsplited_attn(q, k, v, self.dropout.p, softmax_scale, causal)
             else:
-                raise NotImplementedError(f"Unsupport device type: {device_backend} for flash attention")
+                raise NotImplementedError(f"Unsupported device type: {device_backend} for flash attention")
         else:
             return _torch_fixedlen_qkvsplited_attn(q, k, v, self.dropout, softmax_scale, causal, key_padding_mask)
 
     @forward.register(conditions=(str(QKVPackType.KVPACKED), str(CuSeqlenType.With)))
-    def _(
+    def _q_kv_with_cu_seqlens(
         self,
         q,
         kv,
@@ -748,7 +755,7 @@ class CrossAttention(nn.Module):
                     q, kv, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k, self.dropout.p, softmax_scale, causal
                 )
             else:
-                raise NotImplementedError(f"Unsupport device type: {device_backend} for flash attention")
+                raise NotImplementedError(f"Unsupported device type: {device_backend} for flash attention")
         else:
             return _torch_varlen_kvpacked_attn(
                 q,
@@ -764,7 +771,7 @@ class CrossAttention(nn.Module):
             )
 
     @forward.register(conditions=(str(QKVPackType.QKVSPLITED), str(CuSeqlenType.With)))
-    def _(
+    def _q_k_v_with_cu_seqlens(
         self,
         q,
         k,
@@ -821,7 +828,7 @@ class CrossAttention(nn.Module):
                     causal,
                 )
             else:
-                raise NotImplementedError(f"Unsupport device type: {device_backend} for flash attention")
+                raise NotImplementedError(f"Unsupported device type: {device_backend} for flash attention")
         else:
             return _torch_varlen_qkvsplited_attn(
                 q,

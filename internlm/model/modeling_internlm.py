@@ -16,20 +16,14 @@ from internlm.model.modules.linear import new_linear
 from internlm.model.modules.mha import MHA
 from internlm.model.modules.mlp import new_feed_forward
 from internlm.model.modules.norm import new_layer_norm
+from internlm.model.utils import (
+    internlm1_mha_pre_load_convert,
+    internlm1_mha_save_convert,
+)
 from internlm.solver.activation_checkpoint import activation_checkpoint
 from internlm.utils.logger import get_logger
 
 logger = get_logger(__file__)
-
-
-def _internlm1_mha_pre_load_convert(model: MHA, state_dict: Dict, *args, **kwargs) -> None:
-    if "wqkv.weight" not in state_dict:
-        assert "Wqkv.weight" in state_dict, "checkpoint is not compatible, wqkv or Wqkv weight is required."
-
-        state_dict["wqkv.weight"] = state_dict.pop("Wqkv.weight")
-
-def _internlm1_mha_save_convert(model: MHA, state_dict: Dict, *args, **kwargs) -> None:
-    state_dict["Wqkv.weight"] = state_dict.pop("wqkv.weight")
 
 
 class PackedFlashBaseLayer1D(nn.Module):
@@ -103,7 +97,7 @@ class PackedFlashBaseLayer1D(nn.Module):
         )
 
         # Compatible with the name of internlm1 Wqkv linear layer
-        self.mixer.register_checkpoint_compatibility_hooks(_internlm1_mha_pre_load_convert, _internlm1_mha_save_convert)
+        self.mixer.register_checkpoint_compatibility_hooks(internlm1_mha_pre_load_convert, internlm1_mha_save_convert)
 
         self.dropout1 = nn.Dropout(drop_rate)
         self.dropout2 = nn.Dropout(drop_rate)
@@ -111,20 +105,18 @@ class PackedFlashBaseLayer1D(nn.Module):
         self.norm1 = new_layer_norm(norm_type, hidden_size, eps=layer_norm_epsilon)
         self.norm2 = new_layer_norm(norm_type, hidden_size, eps=layer_norm_epsilon)
 
-        if use_swiglu:
-            self.mlp = new_feed_forward(
-                hidden_size,
-                int(hidden_size * mlp_ratio),
-                out_features=hidden_size,
-                bias=False,
-                device=device,
-                dtype=dtype,
-                mlp_layer_fusion=mlp_layer_fusion,
-                multiple_of=multiple_of,
-            )
-        else:
-            # TODO: support gelu and so on.
-            raise ValueError("NYI")
+        self.mlp = new_feed_forward(
+            hidden_size,
+            int(hidden_size * mlp_ratio),
+            out_features=hidden_size,
+            bias=False,
+            device=device,
+            dtype=dtype,
+            mlp_layer_fusion=mlp_layer_fusion,
+            multiple_of=multiple_of,
+            # TODO: to support more activation functions
+            activation_type="swiglu" if use_swiglu else "swiglu",
+        )
 
         self.use_swiglu = use_swiglu
         self.use_scaled_init = use_scaled_init
@@ -137,7 +129,7 @@ class PackedFlashBaseLayer1D(nn.Module):
             for name, param in self.mixer.named_parameters():
                 if param.ndim == 1:
                     param.data.zero_()
-                elif "Wqkv" in name:
+                elif "wqkv" in name:
                     normal_(std=0.006)(param.data)
                 elif self.use_scaled_init:
                     scaled_init_method_normal(sigma=0.006, num_layers=self.layer_idx + 1)(param.data)

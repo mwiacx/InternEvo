@@ -50,6 +50,7 @@ class FeedForward(nn.Module):
         dtype (Optional[torch.dtype]): The type of data.
         multiple_of (int): For efficient training. Reset the size of hidden feature. 256 by default.
         mlp_layer_fusion (Optional[Bool]):  Some linears without bias in FFN can be fused to reduce the comm cost of SP.
+        activation_type (str): the activation function used for feed forward, "swiglu" by default.
     """
 
     def __init__(

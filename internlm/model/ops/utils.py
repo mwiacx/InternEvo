@@ -2,31 +2,8 @@
 Some hepler functions for ops package.
 """
 
-from typing import Callable, Dict, Optional
-
 import torch
 from torch.nn.utils.rnn import pad_sequence
-
-
-class OpsBinding:
-    def __init__(self, binding: Dict[str, Optional[Callable]]) -> None:
-        self.__initialized = False
-        self.__bindings = binding
-
-        for key, value in binding.items():
-            setattr(self, key, value)
-
-    @property
-    def is_initialized(self) -> bool:
-        if self.__initialized:
-            return True
-
-        for key in self.__bindings.keys():
-            if getattr(self, key) is None:
-                return False
-
-        self.__initialized = True
-        return True
 
 
 def unpack_qkv_before_attn(cur_input: torch.Tensor, cu_seqlens: torch.Tensor, padding_v: int = 0):

@@ -38,6 +38,7 @@ class MHA(nn.Module):
         embed_dim (int): The dimention of hidden state.
         num_heads (int): The number of attention heads.
         max_position_embeddings (int): max position embeddings, 2048 by default.
+        bias (bool): Whether the bias is needed for linears. True by default.
         dropout (float): The dropout rate for cross attention and self attention. 0.0 by default.
         softmax_scale (float): The temperature to use for the softmax attention.
         causal (boolean): Whether to apply causal attention mask. False by default.
@@ -49,6 +50,8 @@ class MHA(nn.Module):
         rope_base (int): The value of `base` for rotary position embeddings. 10000 by default.
         device (Optional[Union[str, torch.device]]): The device will be used.
         dtype (Optional[torch.dtype]): The type of data.
+        qk_interleaved (Optional[bool]): whether the odd and even columns of wq and wk is interleaved. True by default.
+        enable_qkv_fusion (bool): whether wq, wk and wv lienar is fused. True by default.
     """
 
     def __init__(
@@ -129,6 +132,10 @@ class MHA(nn.Module):
             return self._inference(x=x, inference_params=inference_params, **kwargs)
 
     def _training(self, x, **kwargs):
+        """
+        Arguments:
+            x: (batch, seqlen, hidden_dim)
+        """
         # wqkv
         if self.enable_qkv_fusion:
             qkv = self.wqkv(x)
@@ -316,18 +323,22 @@ class GQA(nn.Module):
         embed_dim (int): The dimention of hidden state.
         num_heads (int): The number of attention heads.
         num_kv_heads (int): The number of attention heads for key and value.
+        max_position_embeddings (int): max position embeddings, 2048 by default.
         bias (bool): Whether the bias is needed for linears. Will be used when initializing QKV matrix and
                      output projection. False by default.
         dropout (float): The dropout rate for cross attention and self attention. 0.0 by default.
         softmax_scale (float): The temperature to use for the softmax attention.
         causal (boolean): Whether to apply causal attention mask. False by default.
         layer_idx (int): The index of current layer. None by default.
+        use_dynamic_ntk_rope (bool): whether use dynamic ntk rope, false by default.
         rope_base (int): The value of `base` for rotary position embeddings. 10000 by default.
         rotary_emb_dim (int): The dimention of Rotary Embedding. 0 by default.
         rotary_emb_scale_base (int): The scaling factor of Rotary Embedding. If scale_base > 0, this implements
                                     XPos(Sun et al., https://arxiv.org/abs/2212.10554). 0 by default.
         device (Optional[Union[str, torch.device]]): The device will be used.
         dtype (Optional[torch.dtype]): The type of data.
+        qk_interleaved (Optional[bool]): whether the odd and even columns of wq and wk is interleaved. True by default.
+        enable_qkv_fusion (bool): whether wq, wk and wv lienar is fused. True by default.
     """
 
     def __init__(
@@ -369,6 +380,7 @@ class GQA(nn.Module):
 
         factory_kwargs = {"device": device, "dtype": dtype}
 
+        assert self.use_dynamic_ntk_rope is False, "Not support dynamic ntk rope yet."
         assert self.embed_dim % num_heads == 0, "embedding dim must be divisible by num_heads"
 
         if self.rotary_emb_dim > 0:
@@ -412,10 +424,7 @@ class GQA(nn.Module):
     def _training(self, x, **kwargs):
         """
         Arguments:
-            x: (batch, seqlen, hidden_dim) (where hidden_dim = num heads * head dim) if seqlen=None.
-                If seqlen is not None, x is (batch * seqlen, hidden_dim). This is so that when we
-                split x during sequence parallel, we split the batch * seqlen dimension
-                (in case batch is small).
+            x: (batch, seqlen, hidden_dim)
         """
         # wqkv
         if self.enable_qkv_fusion:

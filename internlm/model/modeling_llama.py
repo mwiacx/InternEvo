@@ -126,20 +126,18 @@ class PackedFlashLlamaLayer1D(nn.Module):
         #     assert dropout_add_layer_norm is not None, "dropout_add_ln is not installed"
         #     assert isinstance(self.attention_norm, nn.LayerNorm) and isinstance(self.dropout1, nn.Dropout)
 
-        if use_swiglu:
-            self.feed_forward = new_feed_forward(
-                hidden_size,
-                int(hidden_size * mlp_ratio),
-                out_features=hidden_size,
-                bias=False,
-                device=device,
-                dtype=dtype,
-                mlp_layer_fusion=mlp_layer_fusion,
-                multiple_of=multiple_of,
-            )
-        else:
-            # TODO: support gelu and so on.
-            raise ValueError("NYI")
+        self.feed_forward = new_feed_forward(
+            hidden_size,
+            int(hidden_size * mlp_ratio),
+            out_features=hidden_size,
+            bias=False,
+            device=device,
+            dtype=dtype,
+            mlp_layer_fusion=mlp_layer_fusion,
+            multiple_of=multiple_of,
+            # TODO: to support more activation functions
+            activation_type="swiglu" if use_swiglu else "swiglu",
+        )
 
         self.use_swiglu = use_swiglu
         self.use_scaled_init = use_scaled_init

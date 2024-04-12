@@ -18,6 +18,10 @@ from internlm.model.modules.mha import MHA
 from internlm.model.modules.mlp import new_feed_forward
 from internlm.model.modules.norm import new_layer_norm
 from internlm.model.moe.moe import MoE
+from internlm.model.utils import (
+    internlm1_mha_pre_load_convert,
+    internlm1_mha_save_convert,
+)
 from internlm.solver.activation_checkpoint import activation_checkpoint
 from internlm.utils.logger import get_logger
 
@@ -97,6 +101,9 @@ class PackedFlashBaseLayer1D(nn.Module):
             qk_interleaved=qk_interleaved,
         )
 
+        # Compatible with the name of internlm1 Wqkv linear layer
+        self.mixer.register_checkpoint_compatibility_hooks(internlm1_mha_pre_load_convert, internlm1_mha_save_convert)
+
         self.dropout1 = nn.Dropout(drop_rate)
         self.dropout2 = nn.Dropout(drop_rate)
 
@@ -106,20 +113,18 @@ class PackedFlashBaseLayer1D(nn.Module):
         self.num_experts = num_experts
         ep_size = gpc.get_world_size(ParallelMode.EXPERT)
         if num_experts <= 1:  # dense, not MoE
-            if use_swiglu:
-                self.mlp = new_feed_forward(
-                    hidden_size,
-                    int(hidden_size * mlp_ratio),
-                    out_features=hidden_size,
-                    bias=False,
-                    device=device,
-                    dtype=dtype,
-                    mlp_layer_fusion=mlp_layer_fusion,
-                    multiple_of=multiple_of,
-                )
-            else:
-                # TODO: support gelu and so on.
-                raise ValueError("NYI")
+            self.mlp = new_feed_forward(
+                hidden_size,
+                int(hidden_size * mlp_ratio),
+                out_features=hidden_size,
+                bias=False,
+                device=device,
+                dtype=dtype,
+                mlp_layer_fusion=mlp_layer_fusion,
+                multiple_of=multiple_of,
+                # TODO: to support more activation functions
+                activation_type="swiglu" if use_swiglu else "swiglu",
+            )
         else:
             # replace mlp by MoE module. The expert in MoE is a FeedForward module.
             # mlp_cls = get_mlp_cls(self.tp_mode)
@@ -147,7 +152,7 @@ class PackedFlashBaseLayer1D(nn.Module):
             for name, param in self.mixer.named_parameters():
                 if param.ndim == 1:
                     param.data.zero_()
-                elif "Wqkv" in name:
+                elif "wqkv" in name:
                     normal_(std=0.006)(param.data)
                 elif self.use_scaled_init:
                     scaled_init_method_normal(sigma=0.006, num_layers=self.layer_idx + 1)(param.data)

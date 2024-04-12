@@ -14,8 +14,6 @@ from torch.nn.functional import linear as _torch_linear_forward_op
 from internlm.accelerator import AcceleratorType, get_accelerator
 from internlm.core.context import global_context as gpc
 
-from .utils import OpsBinding
-
 try:
     from fused_dense_lib import linear_bias_wgrad as _flash_linear_backward_op
 
@@ -25,27 +23,18 @@ except (ModuleNotFoundError, ImportError):
 
 internlm_accelerator = get_accelerator()
 
-_bound_ops = OpsBinding(
-    {
-        "linear_forward_op": None,
-        "linear_backward_op": None,
-    }
-)
-
 
 def _select_ops_binding(dtype: torch.dtype, is_cuda: bool = True) -> None:
     dtype_eligible = dtype in (torch.float16, torch.bfloat16) or (
         dtype == torch.float32 and torch.is_autocast_enabled()
     )
     use_cuda_flash_attn = gpc.config.get("use_cuda_flash_attn", False)
-    falsh_attn_eligible = flash_attn_impl and dtype_eligible and is_cuda
+    flash_attn_eligible = flash_attn_impl and dtype_eligible and is_cuda
 
-    if use_cuda_flash_attn and falsh_attn_eligible:
-        _bound_ops.linear_forward_op = _torch_linear_forward_op
-        _bound_ops.linear_backward_op = _flash_linear_backward_op
+    if use_cuda_flash_attn and flash_attn_eligible:
+        return _torch_linear_forward_op, _flash_linear_backward_op
     else:
-        _bound_ops.linear_forward_op = _torch_linear_forward_op
-        _bound_ops.linear_backward_op = _linear_bias_wgrad_torch
+        return _torch_linear_forward_op, _linear_bias_wgrad_torch
 
 
 def _linear_bias_wgrad_torch(_input: torch.Tensor, grad_output: torch.Tensor, has_d_bias: bool):
@@ -59,15 +48,15 @@ def _linear_bias_wgrad_torch(_input: torch.Tensor, grad_output: torch.Tensor, ha
 
 def linear_forward_op(_input: torch.Tensor, weight: torch.Tensor, bias: Optional[torch.Tensor] = None) -> torch.Tensor:
     _is_cuda = internlm_accelerator.get_accelerator_backend() is AcceleratorType.GPU
-    _select_ops_binding(_input.dtype, _is_cuda)
+    _forward_op, _ = _select_ops_binding(_input.dtype, _is_cuda)
 
-    return _bound_ops.linear_forward_op(_input, weight, bias)
+    return _forward_op(_input, weight, bias)
 
 
 def linear_backward_op(
     _input: torch.Tensor, weight: torch.Tensor, has_d_bias: bool
 ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
     _is_cuda = internlm_accelerator.get_accelerator_backend() is AcceleratorType.GPU
-    _select_ops_binding(_input.dtype, _is_cuda)
+    _, _backward_op = _select_ops_binding(_input.dtype, _is_cuda)
 
-    return _bound_ops.linear_backward_op(_input, weight, has_d_bias)
+    return _backward_op(_input, weight, has_d_bias)

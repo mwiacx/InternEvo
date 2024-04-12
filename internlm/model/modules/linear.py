@@ -12,6 +12,7 @@ from torch import nn
 from torch.cuda.amp import custom_bwd, custom_fwd
 
 from internlm.accelerator import get_accelerator
+from internlm.core.context import ParallelMode
 from internlm.core.context import global_context as gpc
 from internlm.core.parallel.comm.tensor import TPCommunicator
 from internlm.core.parallel.shard import (
@@ -46,10 +47,6 @@ class SPFusedDenseFunc(torch.autograd.Function):
         communicator: TPCommunicator,
         return_residual=False,
     ):
-        """
-        If process_group is not None and sequence_parallel=True, we're doing Tensor Parallel
-        with sequence parallelism: we do an all_gather_raw of x before doing the matmul.
-        """
         ctx.compute_weight_gradient = weight.requires_grad
         ctx.return_residual = return_residual
         ctx.communicator = communicator
@@ -148,11 +145,11 @@ class SPFusedDenseFunc(torch.autograd.Function):
         return grad_input, grad_weight, grad_bias, None, None, None, None, None
 
 
-# Q: Should we unify ISPFusedDenseFunc and FusedDenseFunc, as well as the related communicator interface?
-# A: Currently, ISPFusedDenseFunc and FusedDenseFunc have significant differences in their computation logic
+# Q: Should we unify WPFusedDenseFunc and SPFusedDenseFunc, as well as the related communicator interface?
+# A: Currently, WPFusedDenseFunc and SPFusedDenseFunc have significant differences in their computation logic
 #    and communication interfaces, so they should not be unified.
 class WPFusedDenseFunc(torch.autograd.Function):
-    "FusedDenseFunc for ISP, which is optimized based on flash implementation."
+    "FusedDenseFunc for weigth parallel, which is optimized based on flash implementation."
 
     @staticmethod
     @custom_fwd
@@ -278,7 +275,7 @@ def fused_dense_func(
             communicator,
             return_residual,
         )
-    else: # mtp, msp, and fsp
+    else:  # mtp, msp, and fsp
         return SPFusedDenseFunc.apply(
             x,
             weight,
@@ -299,6 +296,7 @@ class ParallelLinearWithCommExt(nn.Linear):
                     in the config.
         device (Optional[Union[str, torch.device]]): The device will be used.
         dtype (Optional[torch.dtype]): The type of data.
+        split_mode (str): The split mode. It can be "none", "column", or "row".
     """
 
     # class level communicator variable.
@@ -312,6 +310,7 @@ class ParallelLinearWithCommExt(nn.Linear):
         self,
         in_features: int,
         out_features: int,
+        parallel_mode: ParallelMode,
         bias: bool = True,
         multiple_of: int = 1,
         device: torch.device = None,
@@ -320,7 +319,6 @@ class ParallelLinearWithCommExt(nn.Linear):
     ) -> None:
         assert split_mode in ("none", "column", "row"), f"unknown split_mode {split_mode}"
 
-        parallel_mode = get_tensor_split_parallel_mode()
         world_size = gpc.get_world_size(parallel_mode)
         rank = gpc.get_local_rank(parallel_mode)
 
@@ -378,7 +376,10 @@ class ColumnParallelLinear(ParallelLinearWithCommExt):
         if out_features % multiple_of:
             raise ValueError(f"out_features ({out_features}) must be a multiple of {multiple_of}")
 
-        super().__init__(in_features, out_features, bias=bias, device=device, dtype=dtype, split_mode="column")
+        parallel_mode = get_tensor_split_parallel_mode()
+        super().__init__(
+            in_features, out_features, parallel_mode, bias=bias, device=device, dtype=dtype, split_mode="column"
+        )
 
 
 class RowParallelLinear(ParallelLinearWithCommExt):
@@ -388,15 +389,10 @@ class RowParallelLinear(ParallelLinearWithCommExt):
     Args:
         in_features (int): size of each input sample
         out_features (int): size of each output sample
-        process_group (Optional[torch.distributed.ProcessGroup]): The group of the current device for `parallel_mode`.
         bias (bool): Whether the bias is needed for linears. True by default. But it is typically set to False
                     in the config.
-        sequence_parallel (bool): If sequence_parallel is True, we're doing Tensor Parallel with sequence parallelism:
-                                    we do an all_gather of x before doing the matmul.
-                                    If not, then the input is already gathered.
         device (Optional[Union[str, torch.device]]): The device will be used.
         dtype (Optional[torch.dtype]): The type of data.
-        weight_scale (int): For training stability. 1 by default.
     """
 
     def __init__(
@@ -411,21 +407,26 @@ class RowParallelLinear(ParallelLinearWithCommExt):
         if in_features % multiple_of:
             raise ValueError(f"in_features ({in_features}) must be a multiple of {multiple_of}")
 
-        rank = gpc.get_local_rank(get_tensor_split_parallel_mode())
-
+        parallel_mode = get_tensor_split_parallel_mode()
+        rank = gpc.get_local_rank(parallel_mode)
         super().__init__(
-            in_features, out_features, bias=bias and rank == 0, device=device, dtype=dtype, split_mode="row"
+            in_features,
+            out_features,
+            parallel_mode,
+            bias=bias and rank == 0,
+            device=device,
+            dtype=dtype,
+            split_mode="row",
         )
 
 
 class ScaleColumnParallelLinear(ParallelLinearWithCommExt):
     """
-    ScaleColumnParallelLinear for InternLM2.
+    ScaleColumnParallelLinear.
 
     Args:
         in_features (int): size of each input sample
         out_features (int): size of each output sample
-        process_group (Optional[torch.distributed.ProcessGroup]): The group of the current device for `parallel_mode`.
         bias (bool): Whether the bias is needed for linears. True by default. But it is typically set to False
                     in the config.
         device (Optional[Union[str, torch.device]]): The device will be used.
@@ -449,7 +450,10 @@ class ScaleColumnParallelLinear(ParallelLinearWithCommExt):
         if norm_head:
             logger.info("Notice that norm head is enabled to normalize head weight.")
 
-        super().__init__(in_features, out_features, bias=bias, device=device, dtype=dtype, split_mode="column")
+        parallel_mode = get_tensor_split_parallel_mode(is_head=True)
+        super().__init__(
+            in_features, out_features, parallel_mode, bias=bias, device=device, dtype=dtype, split_mode="column"
+        )
 
         self.weight_scale = weight_scale
         self.norm_head = norm_head
@@ -493,15 +497,12 @@ class ScaleColumnParallelLinear(ParallelLinearWithCommExt):
 class RewardModelLinear(ScaleColumnParallelLinear):
     """
     RewardModelLinear.
+
     Args:
         in_features (int): size of each input sample
         out_features (int): size of each output sample
-        process_group (Optional[torch.distributed.ProcessGroup]): The group of the current device for `parallel_mode`.
         bias (bool): Whether the bias is needed for linears. True by default. But it is typically set to False
                     in the config.
-        sequence_parallel (bool): If sequence_parallel is True, we're doing Tensor Parallel with sequence parallelism:
-                                    we do an all_gather of x before doing the matmul.
-                                    If not, then the input is already gathered.
         device (Optional[Union[str, torch.device]]): The device will be used.
         dtype (Optional[torch.dtype]): The type of data.
         weight_scale (int): For training stability. 1 by default.
@@ -511,7 +512,6 @@ class RewardModelLinear(ScaleColumnParallelLinear):
         self,
         in_features: int,
         out_features: int,
-        # process_group: Optional[torch.distributed.ProcessGroup],
         bias: bool = True,
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None,

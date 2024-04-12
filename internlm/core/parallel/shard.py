@@ -14,10 +14,12 @@ from internlm.utils.logger import get_logger
 logger = get_logger(__file__)
 
 
-def get_tensor_split_parallel_mode() -> ParallelMode:
+# The head layer in ISP mode is actually a special case,
+# and we would prefer a unified segmentation and communication logic.
+def get_tensor_split_parallel_mode(is_head: bool = False) -> ParallelMode:
     tp_mode = gpc.config.parallel.tensor.mode
 
-    if tp_mode == "isp":
+    if tp_mode == "isp" and is_head is False:
         return ParallelMode.WEIGHT
     else:
         return ParallelMode.TENSOR

@@ -45,7 +45,7 @@ def manual_rms_norm(my_input, weight, normalized_shape, eps):
 
 
 class _RMSNorm(torch.nn.Module):
-    """A custom PyTorch module for RMS normalization."""
+    """A generic module for RMS normalization."""
 
     def __init__(self, normalized_shape, eps=1e-5):
         super().__init__()
