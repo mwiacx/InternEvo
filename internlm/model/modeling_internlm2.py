@@ -280,9 +280,8 @@ class PackedFlashLlama1D(nn.Module):
         drop_rate (float): The dropout rate of input hidden state. 0.0 by default.
         max_position_embeddings (int): The maximum position embeddings. 2048 by default.
         dtype (torch.dtype): The type of data. torch.float by default.
-        checkpoint (bool): Whether to use checkpointing to save VRAM. True by default.
-        checkpoint_fraction (float): The proportion of layers that need to be checkpointed compared to the total number
-                                    of layers. 1.0 by default.
+        checkpoint (float): The proportion of layers that need to be checkpointed compared to the total number
+                            of layers. 0.0 by default.
         layer_norm_epsilon (float): A value added to the denominator for numerical stability. 1e-6 by default.
         first (bool): Whether input embedding layer or not. False by default.
         last (bool): Whether output embedding layer or not. False by default.
@@ -322,8 +321,7 @@ class PackedFlashLlama1D(nn.Module):
         drop_rate: float = 0.0,
         max_position_embeddings: int = 2048,
         dtype: torch.dtype = torch.float,
-        checkpoint: bool = False,
-        checkpoint_fraction: float = 1.0,
+        checkpoint: float = 0.0,
         layer_norm_epsilon: float = 1e-5,
         first: bool = False,
         last: bool = False,
@@ -356,11 +354,7 @@ class PackedFlashLlama1D(nn.Module):
     ):
         super().__init__()
 
-        if checkpoint_fraction <= 0:
-            checkpoint = False
-        if not checkpoint:
-            checkpoint_fraction = 0
-        checkpoint_layer_num = num_layers * checkpoint_fraction
+        checkpoint_layer_num = int(num_layers * checkpoint)
 
         if first:
             # if embed_split_hidden or not gpc.config.model.use_cuda_flash_attn:

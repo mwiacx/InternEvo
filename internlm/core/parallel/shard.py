@@ -95,8 +95,6 @@ def pipeline_parallel_sharding_wrapper(
 
     models = []
 
-    kwargs["checkpoint_fraction"] = float(kwargs.get("checkpoint", False))
-
     for start, end in parts:
         kwargs["num_layers"] = end - start
         kwargs["first"] = start == 0
@@ -105,7 +103,7 @@ def pipeline_parallel_sharding_wrapper(
         kwargs["device"] = device
         kwargs["start_layer_idx"] = start
 
-        chunk = model_builder(kwargs).to(device)
+        chunk = model_builder(**kwargs).to(device)
         setattr(chunk, "first_layer", start)
         setattr(chunk, "last_layer", end)
 

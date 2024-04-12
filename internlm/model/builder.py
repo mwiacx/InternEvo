@@ -10,8 +10,9 @@ from internlm.utils.common import get_current_device
 
 
 def create_model(model_type, *args, **kwargs) -> Union[nn.Module, List[nn.Module]]:
-    num_layers = kwargs.get("num_layers")
+    num_layers = kwargs.pop("num_layers")
     num_chunks = kwargs.pop("num_chunks", 1)
+
     # TODO: fix use_flash_attn parameter config
     kwargs.pop("use_flash_attn", False)
     kwargs.pop("apply_post_layer_norm")
@@ -24,6 +25,7 @@ def create_model(model_type, *args, **kwargs) -> Union[nn.Module, List[nn.Module
     if not gpc.is_using_parallel_mode(ParallelMode.PIPELINE):
         kwargs["first"] = kwargs["last"] = True
         kwargs["start_layer_idx"] = 0
+        kwargs["num_layers"] = num_layers
         model = model_buidler(*args, **kwargs).to(kwargs["device"])
         setattr(model, "first_layer", 0)
         setattr(model, "last_layer", num_layers - 1)
