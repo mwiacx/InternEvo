@@ -696,7 +696,7 @@ class DistributedAttention(nn.Module):
 
         # context shape: [1, packlen, n_head, head_dim] or [batch, seqlen, n_head, head_dim]
         # scatter in seqlen(packlen) and gather in n_head
-        context = _SeqAllToAll.apply(self.spg, context, scatter_idx=1, gather_idx=2)
+        context = _SeqAllToAll.apply(self.spg, context, 1, 2)
 
         return context
 

@@ -292,6 +292,8 @@ class PackedFlashInternLm1D(nn.Module):
         use_scaled_init: bool = True,
         use_swiglu: bool = True,
         num_experts: bool = 1,
+        moe_use_residual: bool = False,  # pylint: disable=W0613
+        moe_type: str = None,  # pylint: disable=W0613
         mlp_layer_fusion: bool = False,
         multiple_of: int = 256,
     ):
