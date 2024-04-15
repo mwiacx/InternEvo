@@ -3,12 +3,10 @@
 
 from typing import Callable
 
-from internlm.model.modeling_internlm import (
-    PackedFlashInternLm1D as InternLMInitializer,
-)
-from internlm.model.modeling_internlm2 import PackedFlashLlama1D as InternLM2Initializer
-from internlm.model.modeling_llama import PackedFlashLlama1D as Llama2Initializer
-from internlm.model.modeling_moe import PackedFlashInternLm1D as InternLMMoEInitializer
+from internlm.model.modeling_internlm import InternLM1
+from internlm.model.modeling_internlm2 import InternLM2
+from internlm.model.modeling_llama import Llama2
+from internlm.model.modeling_moe import Internlm1MoE
 
 
 class Registry:
@@ -77,7 +75,7 @@ model_initializer = Registry("model_initializer")
 
 
 def register_model_initializer() -> None:
-    model_initializer.register_module("INTERNLM", InternLMInitializer)
-    model_initializer.register_module("INTERNLM2_PUBLIC", InternLM2Initializer)
-    model_initializer.register_module("LLAMA2", Llama2Initializer)
-    model_initializer.register_module("INTERNLM_MoE", InternLMMoEInitializer)
+    model_initializer.register_module("INTERNLM", InternLM1)
+    model_initializer.register_module("INTERNLM2_PUBLIC", InternLM2)
+    model_initializer.register_module("LLAMA2", Llama2)
+    model_initializer.register_module("INTERNLM_MoE", Internlm1MoE)

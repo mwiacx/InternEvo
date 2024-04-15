@@ -24,13 +24,14 @@ from internlm.utils.logger import get_logger
 logger = get_logger(__file__)
 
 
-class PackedFlashLlamaLayer1D(nn.Module):
+class Llama2Decoder(nn.Module):
     """
-    1D Packed Flash Llama Layer.
+    Llama2 Decoder Layer.
 
     Args:
         hidden_size (int): The hidden size of model. 768 by default.
         num_attention_heads (int): The number of attention heads. 12 by default.
+        num_kv_attention_heads (int): The number of key/value attention heads. Defaults to 12.
         mlp_ratio (int): The ratio of MLP layers. 4 by default.
         attn_drop_rate (float): The dropout rate of attention module. 0 by default.
         drop_rate (float): The dropout rate of the input hidden state. 0.0 by default.
@@ -40,7 +41,16 @@ class PackedFlashLlamaLayer1D(nn.Module):
         layer_idx (int): The index of current layer. 0 by default.
         residual_in_fp32 (bool): Whether to use residual in fp32. False by default.
         device (Optional[Union[str, torch.device]]): The device will be used.
+        apply_post_layer_norm (bool): Whether to apply layer normalization after the attention and mlp.
+                                        Defaults to False.
+        fused_dropout_add_ln (bool): Whether to fuse dropout, residual addition, and layer normalization.
+                                        Defaults to True.
+        no_bias (bool): Whether to exclude bias in attention and feed-forward networks. Defaults to False.
         norm_type (str): Use RMS norm or layernorm."rmsnorm" by default.
+        qk_interleaved (bool): Whether the odd and even columns of the wq and wk are normally interleaved.
+        dropout_selective_checkpoint (bool): Whether to selectively checkpoint dropout layers only.
+        use_scaled_init (bool): Whether to use scaled initialization for weights.
+        use_swiglu (bool): Whether to use SwiGLU activation in the mlp module.
         attn_wqkv_init_std (float): std used to init attn_wqkv weight. 0.02 by default,
         attn_other_init_std (float): std used to init attn_other weight. 0.02 by default,
         ffn_uplayer_init_std (float): std used to init w1, w2 weight in ffn when using glu
@@ -48,8 +58,8 @@ class PackedFlashLlamaLayer1D(nn.Module):
         ffn_other_init_std (float): std used to init ffn_other weight. 0.02 by default,
         init_type (str): Initialization type. Use uniform or normal. "normal" by default,
         rope_base (int): The value of `base` for rotary position embeddings. 10000 by default.
-        tp_mode (str): The string value of tensor parallel mode, should be in ["mtp", "msp", "fsp", "isp"],
-                       "mtp" by default.
+        mlp_layer_fusion (bool): Whether to fuse layers in the mlp module for optimization.
+        multiple_of (int): Ensures mlp dimensions are multiples of this value for efficient hardware utilization.
     """
 
     def __init__(
@@ -257,14 +267,15 @@ class PackedFlashLlamaLayer1D(nn.Module):
             return hidden_states
 
 
-class PackedFlashLlama1D(nn.Module):
+class Llama2(nn.Module):
     """
-    1D Packed Flash Llama.
+    Llama2 Model.
 
     Args:
         num_layers (int): The number of layer. 12 by default.
         hidden_size (int): The size of hidden state. 768 by default.
         num_attention_heads (int): The number of attention head. 12 by default.
+        num_kv_attention_heads (int): The number of key/value attention heads. Defaults to 12.
         vocab_size (int): The size of vocabulary. 50304 by default.
         mlp_ratio (int): The ratio of MLP layers. 4 by default.
         attn_drop_rate (float): The dropout rate of attention module. 0.0 by default.
@@ -275,15 +286,19 @@ class PackedFlashLlama1D(nn.Module):
         layer_norm_epsilon (float): A value added to the denominator for numerical stability. 1e-6 by default.
         first (bool): Whether input embedding layer or not. False by default.
         last (bool): Whether output embedding layer or not. False by default.
-        embed_split_hidden (bool): Split the embedding layer in the hidden state dimention or vocabulary dimention.
-                                    True by default.
         embed_grad_scale (float): Refer to GLM-130B, for training stability. 0.1 by default.
         parallel_output (bool): If it is necessary to collect the output of parallel computing. True by default.
         start_layer_idx (int): The index of start layer in the pipeline. 0 by default.
         device (Optional[Union[str, torch.device]]): The device will be used. None by default.
+        apply_post_layer_norm (bool): Whether to apply layer normalization after the attention and mlp.
+                                        Defaults to False.
+        no_bias (bool): Whether to exclude bias in attention and feed-forward networks. Defaults to False.
         residual_in_fp32 (bool): Whether to use residual in fp32. False by default.
         norm_type (str): Normalization type. Use RMSNorm or LayerNorm. "rmsnorm" by default.
-        use_cuda_flash_attn (bool): Whether to use flash-attn. True by default.
+        qk_interleaved (bool): Whether the odd and even columns of the wq and wk are normally interleaved.
+        dropout_selective_checkpoint (bool): Whether to selectively checkpoint dropout and norm layers.
+        use_scaled_init (bool): Whether to use scaled initialization for weights.
+        use_swiglu (bool): Whether to use SwiGLU activation in the mlp module.
         embedding_init_std (float): std used to init embedding weight. 0.02 by default,
         attn_wqkv_init_std (float): std used to init attn_wqkv weight. 0.02 by default,
         attn_other_init_std (float): std used to init attn_other weight. 0.02 by default,
@@ -293,6 +308,8 @@ class PackedFlashLlama1D(nn.Module):
         out_head_init_std (float): std used to init output lmhead weight. 0.02 by default,
         init_type (str): Initialization type. Use uniform or normal. "normal" by default,
         rope_base (int): The value of `base` for rotary position embeddings. 10000 by default.
+        mlp_layer_fusion (bool): Whether to fuse layers in the mlp module for optimization.
+        multiple_of (int): Ensures mlp dimensions are multiples of this value for efficient hardware utilization.
     """
 
     def __init__(
@@ -310,7 +327,6 @@ class PackedFlashLlama1D(nn.Module):
         layer_norm_epsilon: float = 1e-5,
         first: bool = False,
         last: bool = False,
-        embed_split_hidden: bool = False,
         embed_grad_scale: float = 0.1,
         parallel_output: bool = True,
         start_layer_idx: int = 0,
@@ -340,21 +356,8 @@ class PackedFlashLlama1D(nn.Module):
         checkpoint_layer_num = int(num_layers * checkpoint)
 
         if first:
-            # if embed_split_hidden or not gpc.config.model.use_cuda_flash_attn:
             self.tok_embeddings = Embedding1D(num_embeddings=vocab_size, embedding_dim=hidden_size)
-            # else:
-            #     from flash_attn.modules.embedding import ParallelGPT2Embeddings
 
-            #     self.tok_embeddings = ParallelGPT2Embeddings(
-            #         embed_dim=hidden_size,
-            #         vocab_size=vocab_size,
-            #         max_position_embeddings=-1,
-            #         process_group=gpc.get_group(ParallelMode.TENSOR),
-            #         padding_idx=None,
-            #         sequence_parallel=sequence_parallel,
-            #         device=device,
-            #         dtype=dtype,
-            #     )
             for _, param in self.tok_embeddings.named_parameters():
                 if init_type == "normal":
                     normal_(std=embedding_init_std)(param)
@@ -364,7 +367,7 @@ class PackedFlashLlama1D(nn.Module):
 
         self.layers = nn.ModuleList(
             [
-                PackedFlashLlamaLayer1D(
+                Llama2Decoder(
                     hidden_size=hidden_size,
                     num_attention_heads=num_attention_heads,
                     num_kv_attention_heads=num_kv_attention_heads,

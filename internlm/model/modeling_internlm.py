@@ -26,7 +26,7 @@ from internlm.utils.logger import get_logger
 logger = get_logger(__file__)
 
 
-class PackedFlashBaseLayer1D(nn.Module):
+class InternLM1Decoder(nn.Module):
     """
     1D Packed Flash Base Layer.
 
@@ -36,15 +36,22 @@ class PackedFlashBaseLayer1D(nn.Module):
         mlp_ratio (int): The ratio of MLP layers. 4 by default.
         attn_drop_rate (float): The dropout rate of attention module. 0 by default.
         drop_rate (float): The dropout rate of the input hidden state. 0.0 by default.
+        max_position_embeddings (int): The maximum position embeddings. 2048 by default.
         dtype (torch.dtype): Type of data. torch.float by default.
         layer_norm_epsilon (float): A value added to the denominator for numerical stability. 1e-5 by default.
         checkpoint (bool): Whether to use checkpointing to save VRAM. True by default.
         layer_idx (int): The index of current layer. 0 by default.
+        use_dynamic_ntk_rope (bool): Whether to use dynamic ntk rope. False by default.
         residual_in_fp32 (bool): Whether to use residual in fp32. False by default.
         device (Optional[Union[str, torch.device]]): The device will be used.
         norm_type (str): Use RMS norm or layernorm."rmsnorm" by default.
-        use_cuda_flash_attn (bool): Whether use flash-attn. True by default.
+        qk_interleaved (bool): Whether the odd and even columns of the wq and wk are normally interleaved.
+        dropout_selective_checkpoint (bool): Whether to selectively checkpoint dropout layers only.
+        use_scaled_init (bool): Whether to use scaled initialization for weights.
+        use_swiglu (bool): Whether to use SwiGLU activation in the mlp module.
         rope_base (int): The value of `base` for rotary position embeddings. 10000 by default.
+        mlp_layer_fusion (bool): Whether to fuse layers in the mlp module for optimization.
+        multiple_of (int): Ensures mlp dimensions are multiples of this value for efficient hardware utilization.
     """
 
     def __init__(
@@ -166,6 +173,7 @@ class PackedFlashBaseLayer1D(nn.Module):
             cu_seqlens: 1d LongTensor, len(cu_seqlens) = hidden_states + 1
             indexes: the length of index is same as hidden states, which stand for the current position
         """
+
         def _dropout_and_norm_attn(_hidden_states):
             _dropped = self.dropout1(_hidden_states)
             _residual = _dropped
@@ -201,7 +209,7 @@ class PackedFlashBaseLayer1D(nn.Module):
         return hidden_states + residual
 
 
-class PackedFlashInternLm1D(nn.Module):
+class InternLM1(nn.Module):
     """
     1D Packed Flash InternLm.
 
@@ -213,23 +221,27 @@ class PackedFlashInternLm1D(nn.Module):
         mlp_ratio (int): The ratio of MLP layers. 4 by default.
         attn_drop_rate (float): The dropout rate of attention module. 0.0 by default.
         drop_rate (float): The dropout rate of input hidden state. 0.0 by default.
+        max_position_embeddings (int): The maximum position embeddings. 2048 by default.
         dtype (torch.dtype): The type of data. torch.float by default.
         checkpoint (float): The proportion of layers that need to be checkpointed compared to the total number
                                     of layers. 0.0 by default.
-        layer_norm_epsilon (float): A value added to the denominator for numerical stability. 1e-6 by default.
+        layer_norm_epsilon (float): A value added to the denominator for numerical stability. 1e-5 by default.
         first (bool): Whether input embedding layer or not. False by default.
         last (bool): Whether output embedding layer or not. False by default.
-        embed_split_hidden (bool): Split the embedding layer in the hidden state dimention or vocabulary dimention.
-                                    True by default.
         embed_grad_scale (float): Refer to GLM-130B, for training stability. 0.1 by default.
         parallel_output (bool): If it is necessary to collect the output of parallel computing. True by default.
         start_layer_idx (int): The index of start layer in the pipeline. 0 by default.
+        use_dynamic_ntk_rope (bool): Whether to use dynamic ntk rope. False by default.
         device (Optional[Union[str, torch.device]]): The device will be used. None by default.
         residual_in_fp32 (bool): Whether to use residual in fp32. False by default.
         norm_type (str): Normalization type. Use RMSNorm or LayerNorm. "rmsnorm" by default.
-        use_cuda_flash_attn (bool): Whether to use flash-attn. True by default.
+        qk_interleaved (bool): Whether the odd and even columns of the wq and wk are normally interleaved.
+        dropout_selective_checkpoint (bool): Whether to selectively checkpoint dropout and norm layers.
+        use_scaled_init (bool): Whether to use scaled initialization for weights.
+        use_swiglu (bool): Whether to use SwiGLU activation in the mlp module.
         rope_base (int): The value of `base` for rotary position embeddings. 10000 by default.
-
+        mlp_layer_fusion (bool): Whether to fuse layers in the mlp module for optimization.
+        multiple_of (int): Ensures mlp dimensions are multiples of this value for efficient hardware utilization.
     """
 
     def __init__(
@@ -247,7 +259,6 @@ class PackedFlashInternLm1D(nn.Module):
         layer_norm_epsilon: float = 1e-5,
         first: bool = False,
         last: bool = False,
-        embed_split_hidden: bool = False,
         embed_grad_scale: float = 0.1,
         parallel_output: bool = True,
         start_layer_idx: int = 0,
@@ -269,28 +280,15 @@ class PackedFlashInternLm1D(nn.Module):
         checkpoint_layer_num = int(num_layers * checkpoint)
 
         if first:
-            # if embed_split_hidden or not use_cuda_flash_attn:
             self.embedding = Embedding1D(num_embeddings=vocab_size, embedding_dim=hidden_size)
-            # else:
-            #     from flash_attn.modules.embedding import ParallelGPT2Embeddings
 
-            #     self.embedding = ParallelGPT2Embeddings(
-            #         embed_dim=hidden_size,
-            #         vocab_size=vocab_size,
-            #         max_position_embeddings=-1,
-            #         process_group=gpc.get_group(ParallelMode.TENSOR),
-            #         padding_idx=None,
-            #         sequence_parallel=gpc.config.parallel.sequence_parallel,
-            #         device=device,
-            #         dtype=dtype,
-            #     )
             for _, param in self.embedding.named_parameters():
                 normal_(std=0.0052)(param)
         self.embed_grad_scale = embed_grad_scale
 
         self.blocks = nn.ModuleList(
             [
-                PackedFlashBaseLayer1D(
+                InternLM1Decoder(
                     hidden_size=hidden_size,
                     num_attention_heads=num_attention_heads,
                     mlp_ratio=mlp_ratio,
