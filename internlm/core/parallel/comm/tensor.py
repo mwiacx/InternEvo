@@ -56,7 +56,7 @@ class TPCommunicator(ABC):
         self, _input: torch.Tensor, async_op: bool = False, is_forward: bool = True
     ) -> Tuple[torch.Tensor, AsyncCommHandle]:
         """
-        communiction for input when forward/backward.
+        communication for input when forward/backward.
         """
         pass
 
@@ -65,21 +65,21 @@ class TPCommunicator(ABC):
         self, grad_output: torch.Tensor, async_op: bool = False
     ) -> Tuple[torch.Tensor, AsyncCommHandle]:
         """
-        communiction for grad_output when backward.
+        communication for grad_output when backward.
         """
         pass
 
     @abstractmethod
     def grad_input_hook(self, grad_input: torch.Tensor, async_op: bool = False) -> Tuple[torch.Tensor, AsyncCommHandle]:
         """
-        communiction for grad_input when backward.
+        communication for grad_input when backward.
         """
         pass
 
     @abstractmethod
     def output_hook(self, output: torch.Tensor, async_op: bool = False) -> Tuple[torch.Tensor, AsyncCommHandle]:
         """
-        communiction for output when forward.
+        communication for output when forward.
         """
         pass
 

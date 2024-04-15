@@ -2,7 +2,7 @@
 # -*- encoding: utf-8 -*-
 
 import math
-from typing import Dict, Optional
+from typing import Optional
 
 import torch
 from torch import nn

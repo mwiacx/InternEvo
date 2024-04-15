@@ -47,14 +47,14 @@ class WPCommunicator(ABC):
     @abstractmethod
     def weight_hook(self, tensor: torch.Tensor, async_op: bool = False, **kwargs) -> torch.Tensor:
         """
-        communiction for weight when forward/backward.
+        communication for weight when forward/backward.
         """
         pass
 
     @abstractmethod
     def grad_hook(self, tensor: torch.Tensor, async_op: bool = False, **kwargs) -> Tuple[torch.Tensor, AsyncCommHandle]:
         """
-        communiction for grad when backward.
+        communication for grad when backward.
         """
         pass
 
