@@ -11,13 +11,13 @@ from internlm.core.context import ParallelMode
 from internlm.core.context import global_context as gpc
 from internlm.core.engine import Engine
 from internlm.core.gradient_handler import PipelineSharedModuleGradientHandler
+from internlm.core.parallel.shard import _partition_uniform
 from internlm.core.scheduler import (
     InterleavedPipelineScheduler,
     NonPipelineScheduler,
     PipelineScheduler,
 )
 from internlm.model.metrics import SchedulerMetricHook
-from internlm.solver.pipeline_utils import partition_uniform
 from internlm.train import initialize_optimizer
 from internlm.utils.common import get_current_device
 
@@ -41,7 +41,7 @@ class MlpModel(nn.Module):
     ):  # pylint: disable=W0613
         if self.model_type != "torch" and self.part[0] != 0:
             input_ids = hidden_states
-        
+
         # Simulate Embedding.
         if self.embedding:
             if len(input_ids.shape) == 2:
@@ -193,7 +193,7 @@ def _build_generic_model_1d(num_layers, num_chunks, embedding=False):
     pipeline_size = gpc.get_world_size(ParallelMode.PIPELINE)
     pipeline_rank = gpc.get_local_rank(ParallelMode.PIPELINE)
 
-    all_parts = partition_uniform(num_layers, pipeline_size, num_chunks)
+    all_parts = _partition_uniform(num_layers, pipeline_size, num_chunks)
     parts = all_parts[pipeline_rank]
     if gpc.is_rank_for_log():
         print(f"The layer sharding is {all_parts}.", flush=True)

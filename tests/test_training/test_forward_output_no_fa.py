@@ -16,7 +16,11 @@ from internlm.data import build_train_loader_with_data_type
 from internlm.initialize.launch import args_sanity_check
 from internlm.model.losses import FlashGPTLMLoss
 from internlm.model.metrics import AccPerplex, SchedulerMetricHook
-from internlm.train import initialize_model, initialize_optimizer
+from internlm.train import (
+    initialize_model,
+    initialize_optimizer,
+    initialize_parallel_communicator,
+)
 from internlm.utils.common import get_current_device
 from internlm.utils.logger import get_logger
 
@@ -110,7 +114,7 @@ config = Config(
         loss=dict(
             label_smoothing=0,
         ),
-        use_cuda_flash_attn=True,
+        use_cuda_flash_attn=False,
     )
 )
 
@@ -167,6 +171,8 @@ def train_check_output(args):
 
     # initialize model
     model = initialize_model()
+
+    _ = initialize_parallel_communicator(model)
 
     # initialize loss function
     criterion = FlashGPTLMLoss(parallel_output=False, label_smoothing=gpc.config.loss.label_smoothing)
