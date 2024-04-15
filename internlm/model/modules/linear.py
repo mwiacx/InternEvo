@@ -14,7 +14,6 @@ from torch.cuda.amp import custom_bwd, custom_fwd
 from internlm.accelerator import get_accelerator
 from internlm.core.context import ParallelMode
 from internlm.core.context import global_context as gpc
-from internlm.core.parallel.comm.tensor import TPCommunicator
 from internlm.core.parallel.shard import (
     get_head_parallel_mode,
     get_parallel_strategies_split_mode,
@@ -24,7 +23,8 @@ from internlm.model.ops.linear import linear_backward_op, linear_forward_op
 from internlm.utils.logger import get_logger
 
 if TYPE_CHECKING:
-    from internlm.core.parallel.comm.isp import ISPCommunicator
+    from internlm.core.parallel.comm.isp import WPCommunicator
+    from internlm.core.parallel.comm.tensor import TPCommunicator
 
 logger = get_logger(__file__)
 internlm_accelerator = get_accelerator()
@@ -159,7 +159,7 @@ class WPFusedDenseFunc(torch.autograd.Function):
         weight: torch.Tensor,
         bias: Optional[torch.Tensor],
         module: nn.Module,
-        communicator: ISPCommunicator,
+        communicator: WPCommunicator,
         return_residual=False,
     ):
         ctx.compute_weight_gradient = weight.requires_grad
@@ -171,8 +171,8 @@ class WPFusedDenseFunc(torch.autograd.Function):
             x = x.to(dtype=torch.get_autocast_gpu_dtype())
         x = x.contiguous()
 
-        total_weight = communicator.all_gather(weight, module)
-        total_bias = bias if bias is None else communicator.all_gather(bias, module, is_bias=True)
+        total_weight = communicator.weight_hook(weight, module=module)
+        total_bias = bias if bias is None else communicator.weight_hook(bias, module=module, is_bias=True)
 
         if torch.is_autocast_enabled():
             total_weight = total_weight.to(dtype=torch.get_autocast_gpu_dtype())
@@ -201,7 +201,7 @@ class WPFusedDenseFunc(torch.autograd.Function):
     @custom_bwd
     def backward(ctx, grad_output, *args):
         module: nn.Module = ctx.module
-        communicator: ISPCommunicator = ctx.communicator
+        communicator: WPCommunicator = ctx.communicator
         x, weight = ctx.saved_tensors
 
         grad_output = grad_output.contiguous()
@@ -213,7 +213,7 @@ class WPFusedDenseFunc(torch.autograd.Function):
         batch_dim = batch_shape.numel()
         grad_output = grad_output.reshape(batch_dim, grad_output.shape[-1])
 
-        total_weight = communicator.all_gather(weight, module)
+        total_weight = communicator.weight_hook(weight, module=module)
 
         # compute weight grad
         if ctx.needs_input_grad[1]:
@@ -224,12 +224,12 @@ class WPFusedDenseFunc(torch.autograd.Function):
                 ctx.needs_input_grad[2],
             )
 
-            grad_weight, grad_weight_sync = communicator.reduce_scatter(
-                grad_weight, module, op=dist.ReduceOp.AVG, is_bias=False
+            grad_weight, grad_weight_sync = communicator.grad_hook(
+                grad_weight, async_op=True, module=module, is_bias=False
             )
             if grad_bias is not None:
-                grad_bias, grad_bias_sync = communicator.reduce_scatter(
-                    grad_bias, module, op=dist.ReduceOp.AVG, is_bias=True
+                grad_bias, grad_bias_sync = communicator.grad_hook(
+                    grad_bias, async_op=True, module=module, is_bias=True
                 )
         else:
             grad_weight = None
@@ -261,7 +261,7 @@ class WPFusedDenseFunc(torch.autograd.Function):
 def fused_dense_func(
     x: torch.Tensor,
     weight: torch.Tensor,
-    communicator: Union[TPCommunicator, ISPCommunicator],
+    communicator: Union[TPCommunicator, WPCommunicator],
     module: Optional[nn.Module] = None,
     bias: Optional[torch.Tensor] = None,
     return_residual: bool = False,

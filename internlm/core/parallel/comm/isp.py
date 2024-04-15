@@ -4,6 +4,7 @@
 communication for isp parallel.
 """
 
+from abc import ABC, abstractmethod
 from functools import partial
 from typing import Any, Callable, Dict, List, Tuple, Union
 
@@ -28,6 +29,34 @@ from internlm.utils.utils import (
     check_attention_argument,
     params_dispatch_with_condition,
 )
+
+
+# not really useful, only for code hint.
+class WPCommunicator(ABC):
+    """
+    Common communicator interface for weight parallel
+    """
+
+    @abstractmethod
+    def communication_mode(self) -> str:
+        """
+        communication mode of communictor
+        """
+        pass
+
+    @abstractmethod
+    def weight_hook(self, tensor: torch.Tensor, async_op: bool = False, **kwargs) -> torch.Tensor:
+        """
+        communiction for weight when forward/backward.
+        """
+        pass
+
+    @abstractmethod
+    def grad_hook(self, tensor: torch.Tensor, async_op: bool = False, **kwargs) -> Tuple[torch.Tensor, AsyncCommHandle]:
+        """
+        communiction for grad when backward.
+        """
+        pass
 
 
 class ISPCommModelConfig:
@@ -163,7 +192,7 @@ class ISPOverlapState:
         self.bias_global_output: Dict[str, torch.Tensor] = {}
 
 
-class ISPCommunicator:
+class ISPCommunicator(WPCommunicator):
     """
     ISP Communicator for managing the all-gather and reduce_scatter of Intern Sequence Parallel.
     """
@@ -496,44 +525,51 @@ class ISPCommunicator:
 
     # communication operation interfaces
 
-    def all_gather(self, tensor: torch.Tensor, module: nn.Module, is_bias: bool = False) -> torch.Tensor:
+    def weight_hook(
+        self, tensor: torch.Tensor, async_op: bool = False, module: nn.Module = None, is_bias: bool = False
+    ) -> torch.Tensor:
         if dist.get_world_size(self.process_group) <= 1:
             return tensor
 
         if not self.overlap:
-            result, _ = all_gather_raw(tensor, self.process_group, async_op=False)
+            result, _ = all_gather_raw(tensor, self.process_group, async_op=async_op)
         elif is_bias:
+            assert module is not None, "The module parameter must be specified"
             result = self._bias_global_output[module]
         else:
+            assert module is not None, "The module parameter must be specified"
             result = self._weight_global_output[module]
 
         return result
 
-    def reduce_scatter(
+    def grad_hook(
         self,
         tensor: torch.Tensor,
-        model: nn.Module,
-        op: dist.ReduceOp,
+        async_op: bool = False,
+        module: nn.Module = None,
+        reduce_op: dist.ReduceOp = dist.ReduceOp.AVG,
         is_bias: bool = False,
     ) -> Tuple[torch.Tensor, AsyncCommHandle]:
         if dist.get_world_size(self.process_group) <= 1:
             return tensor, DUMMY_HANDLE_CONST
 
         if not self.overlap:
-            result, handle = reduce_scatter_raw(tensor, self.process_group, op=op, async_op=True)
+            result, handle = reduce_scatter_raw(tensor, self.process_group, op=reduce_op, async_op=async_op)
         else:
+            assert module is not None, "The module parameter must be specified"
+
             if is_bias:
-                assert hasattr(model.bias, "isp_reduce_scatter_name")
-                key = getattr(model.bias, "isp_reduce_scatter_name")
+                assert hasattr(module.bias, "isp_reduce_scatter_name")
+                key = getattr(module.bias, "isp_reduce_scatter_name")
             else:
-                assert hasattr(model.weight, "isp_reduce_scatter_name")
-                key = getattr(model.weight, "isp_reduce_scatter_name")
+                assert hasattr(module.weight, "isp_reduce_scatter_name")
+                key = getattr(module.weight, "isp_reduce_scatter_name")
 
             self.reduce_scatter_handlers[key] = reduce_scatter_raw(
                 tensor,
                 self.process_group,
-                op=op,
-                async_op=True,
+                op=reduce_op,
+                async_op=async_op,
                 memory_pool_allocator=(
                     self.memory_pool.allocate_reduce_scatter_memory if self.enable_memory_pool else None
                 ),

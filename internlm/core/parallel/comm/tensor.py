@@ -31,7 +31,7 @@ class LinearRole(Enum):
     ROW = "row"
 
 
-# not realy useful, only for code hint.
+# not really useful, only for code hint.
 class TPCommunicator(ABC):
     """
     Common communicator interafce for tensor/sequence parallel.
