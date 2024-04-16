@@ -22,6 +22,7 @@ from internlm.core.parallel.comm.utils import (
     reduce_scatter_raw,
     split_forward_gather_backward,
 )
+from internlm.model.modules.embedding import Embedding1D
 from internlm.model.moe.moe import MoE
 
 # input gather dim
@@ -295,3 +296,42 @@ class MoESequenceParallelCommunicator:
         _output = split_forward_gather_backward(_output, self._parallel_mode, dim=_REDUCE_DIM)
 
         return (_output, *_others)
+
+
+class EmbbedingTensorParallelCommunicator:
+    def __init__(self, parallel_mode: ParallelMode) -> None:
+        self._parallel_mode = parallel_mode
+
+    def register_module_hook(self, module: Embedding1D) -> None:
+        assert isinstance(module, Embedding1D), "Embbeding tensor parallel communicator is only support Embedding1D"
+
+        module.register_forward_hook(self.output_hook)
+
+    def output_hook(self, module: Embedding1D, args: Any, output: Tuple[Any]) -> Tuple[Any]:
+        """
+        split output after forward and allgather grad_output before backward.
+        """
+        _emb_dim = 2  # [bsz, seqlen, emb_dim]
+
+        return gather_forward_split_backward(output, self._parallel_mode, dim=_emb_dim)
+
+
+class EmbbedingSequenceParallelCommunicator:
+    def __init__(self, parallel_mode: ParallelMode) -> None:
+        self._parallel_mode = parallel_mode
+
+    def register_module_hook(self, module: Embedding1D) -> None:
+        assert isinstance(module, Embedding1D), "Embbeding sequence parallel communicator is only support Embedding1D"
+
+        module.register_forward_hook(self.output_hook)
+
+    def output_hook(self, module: Embedding1D, args: Any, output: Tuple[Any]) -> Tuple[Any]:
+        """
+        split output after forward and allgather grad_output before backward.
+        """
+        _emb_dim, _seq_dim = 2, 1  # [bsz, seqlen, emb_dim]
+
+        output = gather_forward_split_backward(output, self._parallel_mode, dim=_emb_dim)
+        output = split_forward_gather_backward(output, self._parallel_mode, dim=_seq_dim)
+
+        return output

@@ -37,6 +37,8 @@ from internlm.core.parallel.comm.isp import (
     ISPCommunicatorSchedulerHook,
 )
 from internlm.core.parallel.comm.tensor import (
+    EmbbedingSequenceParallelCommunicator,
+    EmbbedingTensorParallelCommunicator,
     HeadSequenceParallelCommunicator,
     HeadTensorParallelCommunicator,
     LinearRole,
@@ -302,7 +304,8 @@ def initialize_parallel_communicator(model: Union[nn.Module, nn.ModuleList]):
         ColumnParallelLinear.register_cls_communicator(isp_communicator)
         # row parallel linear will not be used.
         RowParallelLinear.register_cls_communicator(None)
-        _head_comminucator = HeadSequenceParallelCommunicator(ParallelMode.TENSOR, _retain_out_sharded)
+        _head_communicator = HeadSequenceParallelCommunicator(ParallelMode.TENSOR, _retain_out_sharded)
+        _embbeding_communicator = EmbbedingSequenceParallelCommunicator(ParallelMode.TENSOR)
 
     # register communictor for mtp/msp/fsp linear.
 
@@ -314,7 +317,8 @@ def initialize_parallel_communicator(model: Union[nn.Module, nn.ModuleList]):
         RowParallelLinear.register_cls_communicator(
             TensorParallelCommunicator(process_group=gpc.get_group(ParallelMode.TENSOR), role=LinearRole.ROW)
         )
-        _head_comminucator = HeadTensorParallelCommunicator(ParallelMode.TENSOR, _retain_out_sharded)
+        _head_communicator = HeadTensorParallelCommunicator(ParallelMode.TENSOR, _retain_out_sharded)
+        _embbeding_communicator = EmbbedingTensorParallelCommunicator(ParallelMode.TENSOR)
     # sequence parallel
     if gpc.config.parallel.tensor.mode in ("msp", "fsp"):
         save_total_input_as_activation = gpc.config.parallel.tensor.mode == "msp"
@@ -333,9 +337,12 @@ def initialize_parallel_communicator(model: Union[nn.Module, nn.ModuleList]):
                 save_total_input_as_activation=save_total_input_as_activation,
             )
         )
-        _head_comminucator = HeadSequenceParallelCommunicator(
+
+        _head_communicator = HeadSequenceParallelCommunicator(
             ParallelMode.TENSOR, _retain_out_sharded, save_total_input_as_activation
         )
+        _embbeding_communicator = EmbbedingSequenceParallelCommunicator(ParallelMode.TENSOR)
+
         # MoE sequence parallel
         if gpc.config.model.get("num_experts", 1) > 1:
             _column_communicator = TensorParallelCommunicator(
@@ -353,9 +360,13 @@ def initialize_parallel_communicator(model: Union[nn.Module, nn.ModuleList]):
                 # 2. register MoESequenceParallelCommunicator for MoE layer
                 MoESequenceParallelCommunicator(ParallelMode.TENSOR).register_module_hook(moe)
 
+    # register communitorc for embbeding layer.
+    for embedding in _submodule_filter(model, Embedding1D):
+        _embbeding_communicator.register_module_hook(embedding)
+
     # register communictor for head layer.
-    ScaleColumnParallelLinear.register_cls_communicator(_head_comminucator)
-    RewardModelLinear.register_cls_communicator(_head_comminucator)
+    ScaleColumnParallelLinear.register_cls_communicator(_head_communicator)
+    RewardModelLinear.register_cls_communicator(_head_communicator)
 
     return isp_communicator
 

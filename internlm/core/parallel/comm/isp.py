@@ -242,9 +242,8 @@ class ISPCommunicator(WPCommunicator):
             # build overlap states for every chunk.
             for chunk_id, chunk in enumerate(unwrap_naive_amp(model)):
                 self._parse_model_structure(chunk_id, chunk)
-            # register overlap hooks for every chunk.
-            for chunk_id in range(len(model)):
                 self.switch_current_model_chunk(chunk_id)
+                # register overlap hooks for every chunk.
                 self._register_sync_parameters_hook()
             # switch to chunk 0 at first.
             self.switch_current_model_chunk(0)

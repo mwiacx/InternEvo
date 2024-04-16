@@ -52,14 +52,7 @@ class Embedding1D(nn.Module):
         self.weight = nn.Parameter(torch.empty((num_embeddings, embed_dim_per_partition), dtype=dtype))
 
     def forward(self, input_: Tensor) -> Tensor:
-        output_parallel = F.embedding(input_, self.weight, self.padding_idx, *self.embed_args, **self.embed_kwargs)
-
-        output = gather_forward_split_backward(output_parallel, ParallelMode.TENSOR, dim=-1)
-
-        if gpc.config.parallel.sequence_parallel:
-            output = split_forward_gather_backward(output, ParallelMode.TENSOR, dim=-2)
-
-        return output
+        return F.embedding(input_, self.weight, self.padding_idx, *self.embed_args, **self.embed_kwargs)
 
 
 class RotaryEmbedding(torch.nn.Module):
