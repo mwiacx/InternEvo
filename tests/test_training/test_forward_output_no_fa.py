@@ -173,6 +173,8 @@ def train_check_output(args):
     model = initialize_model()
     _ = initialize_parallel_communicator(model)
 
+    _ = initialize_parallel_communicator(model)
+
     # initialize loss function
     criterion = FlashGPTLMLoss(parallel_output=False, label_smoothing=gpc.config.loss.label_smoothing)
 

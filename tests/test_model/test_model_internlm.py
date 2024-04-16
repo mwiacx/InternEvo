@@ -11,9 +11,19 @@ from internlm.accelerator import get_accelerator
 from internlm.core.context import ParallelMode
 from internlm.core.context.parallel_context import Config
 from internlm.core.context.parallel_context import global_context as gpc
-from internlm.model.modules.linear import new_linear
+from internlm.core.parallel.comm.tensor import (
+    HeadTensorParallelCommunicator,
+    LinearRole,
+    TensorParallelCommunicator,
+)
+from internlm.core.parallel.comm.utils import gather_forward_split_backward
 from internlm.model.modeling_internlm import PackedFlashBaseLayer1D
-from internlm.model.modules.utils import gather_forward_split_backward
+from internlm.model.modules.linear import (
+    ColumnParallelLinear,
+    RowParallelLinear,
+    ScaleColumnParallelLinear,
+    new_linear,
+)
 from internlm.utils.common import get_current_device
 
 internlm_accelerator = get_accelerator()
@@ -101,6 +111,14 @@ def check_block(args):
     # fix seed
     seed_all(1024)
 
+    ColumnParallelLinear.register_communicator(
+        TensorParallelCommunicator(process_group=gpc.get_group(ParallelMode.TENSOR), role=LinearRole.COLUMN)
+    )
+
+    RowParallelLinear.register_communicator(
+        TensorParallelCommunicator(process_group=gpc.get_group(ParallelMode.TENSOR), role=LinearRole.ROW)
+    )
+
     # define block
     blocks = nn.ModuleList(
         [
@@ -133,10 +151,12 @@ def check_block(args):
     hidden_states = torch.tensor(
         [
             [
-                [-1.1620, 1.3113, 0.1507, 2.2698],
-                [-1.2610, 1.0990, 0.3787, -0.3478],
-                [1.4001, 1.1982, -0.6696, 0.3269],
-                [1.3304, 1.2262, 1.0735, -1.1169],
+                [
+                    [-1.1620, 1.3113, 0.1507, 2.2698],
+                    [-1.2610, 1.0990, 0.3787, -0.3478],
+                    [1.4001, 1.1982, -0.6696, 0.3269],
+                    [1.3304, 1.2262, 1.0735, -1.1169],
+                ]
             ]
         ]
     )
@@ -203,8 +223,8 @@ def check_block(args):
 def check_head(args):
     # init
     rank, world_size, is_reward = args
-    device = get_current_device()
     build_environment(rank, world_size)
+    device = get_current_device()
     rtol, atol = (1e-3, 5e-3)
     hidden_size = 4
     vocab_size = 4
@@ -212,6 +232,10 @@ def check_head(args):
 
     # fix seed
     seed_all(1024)
+
+    _retain_out_sharded = gpc.config.model.get("parallel_output", True)
+    _head_comminucator = HeadTensorParallelCommunicator(ParallelMode.TENSOR, _retain_out_sharded)
+    ScaleColumnParallelLinear.register_communicator(_head_comminucator)
 
     # load standard
     if is_reward:
@@ -302,8 +326,8 @@ def check_gather_forward(args):
     rank, world_size, parallel_tensor = args
     assert parallel_tensor in [1, 2]
     config.parallel.tensor = parallel_tensor
-    device = get_current_device()
     build_environment(rank, world_size)
+    device = get_current_device()
     rtol, atol = (1e-3, 5e-3)
 
     # fix seed

@@ -82,7 +82,12 @@ def check_model_weights(model, ckpt_path, total_equal=False):
     model1_dict = torch.load(ckpt_path, map_location="cuda")
     model2_dict = model.state_dict()
 
-    for key in model2_dict.keys():
+    copy_of_ordered_dict = model2_dict.copy()
+
+    for key in copy_of_ordered_dict.keys():
+        if "wqkv" in key:
+            model2_dict[key.replace("wqkv", "Wqkv")] = model2_dict.pop(key)
+            key = key.replace("wqkv", "Wqkv")
         if key not in model1_dict:
             assert False, f"Error: The key {key} for current model dose not exist in standard ckpt!"
 
