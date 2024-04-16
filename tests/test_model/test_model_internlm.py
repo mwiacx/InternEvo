@@ -111,11 +111,11 @@ def check_block(args):
     # fix seed
     seed_all(1024)
 
-    ColumnParallelLinear.register_communicator(
+    ColumnParallelLinear.register_cls_communicator(
         TensorParallelCommunicator(process_group=gpc.get_group(ParallelMode.TENSOR), role=LinearRole.COLUMN)
     )
 
-    RowParallelLinear.register_communicator(
+    RowParallelLinear.register_cls_communicator(
         TensorParallelCommunicator(process_group=gpc.get_group(ParallelMode.TENSOR), role=LinearRole.ROW)
     )
 
@@ -235,7 +235,7 @@ def check_head(args):
 
     _retain_out_sharded = gpc.config.model.get("parallel_output", True)
     _head_comminucator = HeadTensorParallelCommunicator(ParallelMode.TENSOR, _retain_out_sharded)
-    ScaleColumnParallelLinear.register_communicator(_head_comminucator)
+    ScaleColumnParallelLinear.register_cls_communicator(_head_comminucator)
 
     # load standard
     if is_reward:

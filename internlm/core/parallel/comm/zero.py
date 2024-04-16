@@ -10,7 +10,7 @@ from torch import nn
 
 from internlm.core.context import ParallelMode
 from internlm.core.context import global_context as gpc
-from internlm.core.naive_amp import NaiveAMPModel
+from internlm.core.naive_amp import unwrap_naive_amp
 from internlm.core.parallel.comm.isp import ISPCommunicator
 from internlm.model.modules.embedding import Embedding1D
 from internlm.model.modules.linear import ScaleColumnParallelLinear
@@ -36,15 +36,8 @@ class ParamAsyncBcastHandler:
         # initialize an empty list for _bcast_handles of each rank
         self._bcast_handles = {rank: [] for rank in range(zero1_size)}
 
-        # just want to share same for loop for ModuleList and Module
-        if not isinstance(model, nn.ModuleList):
-            model = [model]
-
         # record the parameters to transformer/embeding/head/norm block
-        for _chunk in model:
-            if isinstance(_chunk, NaiveAMPModel):
-                _chunk = _chunk.model
-
+        for _chunk in unwrap_naive_amp(model):
             for _, children in _chunk.named_children():
                 # should be the transformer block definaton in modeling_xxx.py
                 if isinstance(children, nn.ModuleList):

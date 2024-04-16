@@ -14,7 +14,7 @@ from torch import nn
 
 from internlm.core.context import ParallelMode
 from internlm.core.context import global_context as gpc
-from internlm.core.naive_amp import NaiveAMPModel
+from internlm.core.naive_amp import unwrap_naive_amp
 from internlm.core.parallel.comm.utils import (
     DUMMY_HANDLE_CONST,
     AsyncCommHandle,
@@ -239,12 +239,8 @@ class ISPCommunicator(WPCommunicator):
 
         # init overlap states if necessary.
         if self.overlap:
-            # just want to share same for loop for modulelist and module.
-            model = model if isinstance(model, nn.ModuleList) else [model]
             # build overlap states for every chunk.
-            for chunk_id, chunk in enumerate(model):
-                if isinstance(chunk, NaiveAMPModel):
-                    chunk = chunk.model
+            for chunk_id, chunk in enumerate(unwrap_naive_amp(model)):
                 self._parse_model_structure(chunk_id, chunk)
             # register overlap hooks for every chunk.
             for chunk_id in range(len(model)):

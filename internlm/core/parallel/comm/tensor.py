@@ -4,7 +4,7 @@ communication for tensor/sequence parallel.
 
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import Tuple
+from typing import Any, Tuple
 
 import torch
 from torch import distributed as dist
@@ -18,8 +18,11 @@ from internlm.core.parallel.comm.utils import (
     _split,
     all_gather_raw,
     all_reduce_raw,
+    gather_forward_split_backward,
     reduce_scatter_raw,
+    split_forward_gather_backward,
 )
+from internlm.model.moe.moe import MoE
 
 # input gather dim
 _GATHER_DIM = 1  # shape: [batch, seqlen, dim] or [1, packlen, dim]
@@ -263,3 +266,32 @@ class HeadSequenceParallelCommunicator(SequenceParallelCommunicator):
             return output, DUMMY_HANDLE_CONST
 
         return _gather(output, parallel_mode=self._parallel_mode, dim=-1)
+
+
+class MoESequenceParallelCommunicator:
+    def __init__(self, parallel_mode: ParallelMode) -> None:
+        self._parallel_mode = parallel_mode
+
+    def register_module_hook(self, module: MoE) -> None:
+        assert isinstance(module, MoE), "MoE sequence parallel communicator is only support moe module"
+
+        module.register_forward_pre_hook(self.input_hook, with_kwargs=True)
+        module.register_forward_hook(self.output_hook)
+
+    def input_hook(self, module: MoE, args, kwargs) -> torch.Tensor:
+        """
+        allgather input before forward and split grad_input after backward.
+        """
+        _input = args[0] if len(args) > 0 else kwargs.pop("hidden_states")
+        _input = gather_forward_split_backward(_input, self._parallel_mode, dim=_GATHER_DIM)
+
+        return (_input, *args), kwargs
+
+    def output_hook(self, module: MoE, args: Any, output: Tuple[Any]) -> Tuple[Any]:
+        """
+        split output after forward and allgather grad_output before backward.
+        """
+        _output, *_others = output
+        _output = split_forward_gather_backward(_output, self._parallel_mode, dim=_REDUCE_DIM)
+
+        return (_output, *_others)

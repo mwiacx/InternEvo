@@ -303,8 +303,14 @@ class ParallelLinearWithCommExt(nn.Linear):
     _communicator = None
 
     @classmethod
-    def register_communicator(cls, communicator):
+    def register_cls_communicator(cls, communicator):
         cls._communicator = communicator
+
+    def register_communicator(self, communicator):
+        """
+        override the class default communicator for a parallel linear instance
+        """
+        self._communicator = communicator
 
     def __init__(
         self,

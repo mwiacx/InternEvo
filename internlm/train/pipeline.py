@@ -3,7 +3,7 @@
 
 import functools
 import time
-from typing import Callable, Iterable, List, Optional, Union
+from typing import Callable, Iterable, List, Optional, Tuple, TypeVar, Union
 
 import torch
 from torch import nn
@@ -26,7 +26,11 @@ from internlm.core.context import (
 )
 from internlm.core.context import global_context as gpc
 from internlm.core.context.random import set_mode
-from internlm.core.naive_amp import NaiveAMPModel, set_fp32_attr_to_module
+from internlm.core.naive_amp import (
+    NaiveAMPModel,
+    set_fp32_attr_to_module,
+    unwrap_naive_amp,
+)
 from internlm.core.parallel.comm.isp import (
     ISPCommModelConfig,
     ISPCommunicator,
@@ -36,6 +40,7 @@ from internlm.core.parallel.comm.tensor import (
     HeadSequenceParallelCommunicator,
     HeadTensorParallelCommunicator,
     LinearRole,
+    MoESequenceParallelCommunicator,
     SequenceParallelCommunicator,
     TensorParallelCommunicator,
 )
@@ -140,13 +145,7 @@ def set_parallel_attr_for_param_groups(model: Union[nn.Module, nn.ModuleList]):
                 elif not is_moe_param(param) and gpc.is_initialized(ParallelMode.WEIGHT) and is_using_isp():
                     setattr(param, IS_WEIGHT_ZERO_PARALLEL, True)
 
-    if not isinstance(model, nn.ModuleList):
-        model = [model]
-
-    for _chunk in model:
-        if isinstance(_chunk, NaiveAMPModel):
-            _chunk = _chunk.model
-
+    for _chunk in unwrap_naive_amp(model):
         # set param parallel attribute
         for name, module in _chunk.named_modules():
             _check_module(module)
@@ -262,6 +261,18 @@ def wrap_FSDP_model(model: Union[nn.Module, nn.ModuleList]):
     return model
 
 
+_T = TypeVar("_T")
+
+
+def _submodule_filter(model: Union[nn.Module, nn.ModuleList], target_cls: Union[_T, Tuple[_T]]) -> Iterable[_T]:
+    for _chunk in unwrap_naive_amp(model):
+        for _module in _chunk.modules():
+            if not isinstance(_module, target_cls):
+                continue
+
+            yield _module
+
+
 def initialize_parallel_communicator(model: Union[nn.Module, nn.ModuleList]):
     """
     Initialize communicator for isp tensor parallel mode.
@@ -288,19 +299,19 @@ def initialize_parallel_communicator(model: Union[nn.Module, nn.ModuleList]):
             gpc.get_group(ParallelMode.WEIGHT),
         )
         # register communicator for isp column parallel linear.
-        ColumnParallelLinear.register_communicator(isp_communicator)
+        ColumnParallelLinear.register_cls_communicator(isp_communicator)
         # row parallel linear will not be used.
-        RowParallelLinear.register_communicator(None)
+        RowParallelLinear.register_cls_communicator(None)
         _head_comminucator = HeadSequenceParallelCommunicator(ParallelMode.TENSOR, _retain_out_sharded)
 
     # register communictor for mtp/msp/fsp linear.
 
     # tensor parallel
     if gpc.config.parallel.tensor.mode == "mtp":
-        ColumnParallelLinear.register_communicator(
+        ColumnParallelLinear.register_cls_communicator(
             TensorParallelCommunicator(process_group=gpc.get_group(ParallelMode.TENSOR), role=LinearRole.COLUMN)
         )
-        RowParallelLinear.register_communicator(
+        RowParallelLinear.register_cls_communicator(
             TensorParallelCommunicator(process_group=gpc.get_group(ParallelMode.TENSOR), role=LinearRole.ROW)
         )
         _head_comminucator = HeadTensorParallelCommunicator(ParallelMode.TENSOR, _retain_out_sharded)
@@ -308,14 +319,14 @@ def initialize_parallel_communicator(model: Union[nn.Module, nn.ModuleList]):
     if gpc.config.parallel.tensor.mode in ("msp", "fsp"):
         save_total_input_as_activation = gpc.config.parallel.tensor.mode == "msp"
 
-        ColumnParallelLinear.register_communicator(
+        ColumnParallelLinear.register_cls_communicator(
             SequenceParallelCommunicator(
                 process_group=gpc.get_group(ParallelMode.TENSOR),
                 role=LinearRole.COLUMN,
                 save_total_input_as_activation=save_total_input_as_activation,
             )
         )
-        RowParallelLinear.register_communicator(
+        RowParallelLinear.register_cls_communicator(
             SequenceParallelCommunicator(
                 gpc.get_group(ParallelMode.TENSOR),
                 role=LinearRole.ROW,
@@ -325,10 +336,26 @@ def initialize_parallel_communicator(model: Union[nn.Module, nn.ModuleList]):
         _head_comminucator = HeadSequenceParallelCommunicator(
             ParallelMode.TENSOR, _retain_out_sharded, save_total_input_as_activation
         )
+        # MoE sequence parallel
+        if gpc.config.model.get("num_experts", 1) > 1:
+            _column_communicator = TensorParallelCommunicator(
+                process_group=gpc.get_group(ParallelMode.TENSOR), role=LinearRole.COLUMN
+            )
+            _row_communicator = TensorParallelCommunicator(
+                process_group=gpc.get_group(ParallelMode.TENSOR), role=LinearRole.ROW
+            )
+            for moe in _submodule_filter(model, MoE):
+                # 1. the linear in MoE degrades the parallel communication pattern from sp to tp
+                for column_linear in _submodule_filter(moe, ColumnParallelLinear):
+                    column_linear.register_communicator(_column_communicator)
+                for row_linear in _submodule_filter(moe, RowParallelLinear):
+                    row_linear.register_communicator(_row_communicator)
+                # 2. register MoESequenceParallelCommunicator for MoE layer
+                MoESequenceParallelCommunicator(ParallelMode.TENSOR).register_module_hook(moe)
 
     # register communictor for head layer.
-    ScaleColumnParallelLinear.register_communicator(_head_comminucator)
-    RewardModelLinear.register_communicator(_head_comminucator)
+    ScaleColumnParallelLinear.register_cls_communicator(_head_comminucator)
+    RewardModelLinear.register_cls_communicator(_head_comminucator)
 
     return isp_communicator
 
