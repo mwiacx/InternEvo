@@ -658,12 +658,8 @@ class DistributedAttention(nn.Module):
     """Initialization.
 
     Arguments:
-        local_attention (Module): local attention with q,k,v
+        local_attention (Module): local self-attention module
         sequence_process_group (ProcessGroup): sequence parallel process group
-        first_scatter_idx (int): scatter_idx for the first all2all comm
-        first_gather_idx (int): gather_idx for the first all2all comm
-        second_scatter_idx (int): scatter_idx for the second all2all comm
-        second_gather_idx (int): gather_idx for the second all2all comm
     """
 
     def __init__(

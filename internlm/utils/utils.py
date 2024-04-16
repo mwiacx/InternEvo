@@ -41,7 +41,6 @@ class CuSeqlenType(Enum):
         return str(self.value)
 
 
-# 这个函数应该放在哪里比较好，他同时被 attention 和 distributed attention 依赖。
 def check_attention_argument(*args, **kwargs) -> str:
     # self, qkv, ...
     # self, q, kv, ....
@@ -117,22 +116,6 @@ def params_dispatch_with_condition(condition: Callable, func: Callable = None):
             raise TypeError(f"{funcname} requires at least " "1 positional argument")
 
         _type = "-".join(condition(*args, **kwargs))
-
-        # def _print_helper(*args, **kwargs):
-        #     ret = "args: "
-        #     for v in args:
-        #         if isinstance(v, torch.Tensor):
-        #             ret += f"{str(v.shape)}, "
-        #         else:
-        #             ret += f"{v}, "
-        #     ret += "kwargs: "
-        #     for k, v in kwargs.items():
-        #         if isinstance(v, torch.Tensor):
-        #             ret += f"k<{k}>: {str(v.shape)},"
-        #         else:
-        #             ret += f"k<{k}>: {v},"
-        #     return ret
-        # print(f"_type: {_type}, {_print_helper(*args, **kwargs)}")
 
         return dispatch(_type)(*args, **kwargs)
 
