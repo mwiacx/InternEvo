@@ -21,7 +21,7 @@ except (ModuleNotFoundError, ImportError):
     apex_rmsnorm_impl = False
 
 try:
-    from deeplink_ext.internlm_ops.rms_norm import DeepLinkRMSNormWithNormalizedShape
+    from deeplink_ext.internevo_ops import MixedFusedRMSNorm
 
     deeplink_rmsnorm_impl = True
 except (ModuleNotFoundError, ImportError):
@@ -74,7 +74,7 @@ class _RMSNorm(torch.nn.Module):
 
 # TODO: Support deeplink in a more unified manner
 RMSNorm = (
-    DeepLinkRMSNormWithNormalizedShape
+    MixedFusedRMSNorm
     if internlm_accelerator.get_accelerator_backend() == AcceleratorType.DIPU and deeplink_rmsnorm_impl
     else _RMSNorm
 )

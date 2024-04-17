@@ -138,11 +138,6 @@ class InternLM2Decoder(nn.Module):
         self.dropout2 = nn.Dropout(drop_rate)
         self.attention_norm = new_layer_norm(norm_type, hidden_size, eps=layer_norm_epsilon)
         self.ffn_norm = new_layer_norm(norm_type, hidden_size, eps=layer_norm_epsilon)
-        # if self.fused_dropout_add_ln and self.use_cuda_flash_attn:
-        #     from flash_attn.ops.layer_norm import dropout_add_layer_norm
-
-        #     assert dropout_add_layer_norm is not None, "dropout_add_ln is not installed"
-        #     assert isinstance(self.attention_norm, nn.LayerNorm) and isinstance(self.dropout1, nn.Dropout)
 
         self.feed_forward = new_feed_forward(
             hidden_size,
@@ -280,10 +275,10 @@ class InternLM2(nn.Module):
     InternLM2 Model.
 
     Args:
-        num_layers (int): The number of layer. 12 by default.
-        hidden_size (int): The size of hidden state. 768 by default.
-        num_attention_heads (int): The number of attention head. 12 by default.
-        num_kv_attention_heads (int): The number of key/value attention heads. Defaults to 12.
+        num_layers (int): The number of layer. 48 by default.
+        hidden_size (int): The size of hidden state. 2048 by default.
+        num_attention_heads (int): The number of attention head. 32 by default.
+        num_kv_attention_heads (int): The number of key/value attention heads. Defaults to 32.
         vocab_size (int): The size of vocabulary. 50304 by default.
         mlp_ratio (int): The ratio of MLP layers. 4 by default.
         attn_drop_rate (float): The dropout rate of attention module. 0.0 by default.
@@ -365,6 +360,8 @@ class InternLM2(nn.Module):
         super().__init__()
 
         checkpoint_layer_num = int(num_layers * checkpoint)
+        self.embed_grad_scale = embed_grad_scale
+        self.parallel_output = parallel_output
 
         if first:
             self.tok_embeddings = Embedding1D(num_embeddings=vocab_size, embedding_dim=hidden_size)
@@ -374,8 +371,6 @@ class InternLM2(nn.Module):
                     normal_(std=embedding_init_std)(param)
                 else:
                     uniform_(std=embedding_init_std)(param)
-
-        self.embed_grad_scale = embed_grad_scale
 
         self.layers = nn.ModuleList(
             [
@@ -436,11 +431,9 @@ class InternLM2(nn.Module):
                 else:
                     uniform_(std=out_head_init_std)(param)
 
-        self.parallel_output = parallel_output
-
     def forward(self, hidden_states=None, input_ids=None, **kwargs):
         # attention_mask: compute attention on the places where the value is 1
-        if hasattr(self, "tok_embeddings"):
+        if hasattr(self, "tok_embeddings") and input_ids is not None:
             hidden_states = self.tok_embeddings(input_ids)
             if self.embed_grad_scale != 1:
                 hidden_states = (

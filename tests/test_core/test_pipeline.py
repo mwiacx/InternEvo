@@ -82,7 +82,6 @@ config = Config(
             eta_min=1e-5,
             last_epoch=-1,
         ),
-        use_cuda_flash_attn=True,
     )
 )
 

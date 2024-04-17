@@ -11,7 +11,7 @@ from internlm.core.context import ParallelMode
 from internlm.core.context import global_context as gpc
 from internlm.core.engine import Engine
 from internlm.core.gradient_handler import PipelineSharedModuleGradientHandler
-from internlm.core.parallel.shard import _partition_uniform
+from internlm.core.parallel.shard import partition_uniform
 from internlm.core.scheduler import (
     InterleavedPipelineScheduler,
     NonPipelineScheduler,
@@ -193,7 +193,7 @@ def _build_generic_model_1d(num_layers, num_chunks, embedding=False):
     pipeline_size = gpc.get_world_size(ParallelMode.PIPELINE)
     pipeline_rank = gpc.get_local_rank(ParallelMode.PIPELINE)
 
-    all_parts = _partition_uniform(num_layers, pipeline_size, num_chunks)
+    all_parts = partition_uniform(num_layers, pipeline_size, num_chunks)
     parts = all_parts[pipeline_rank]
     if gpc.is_rank_for_log():
         print(f"The layer sharding is {all_parts}.", flush=True)

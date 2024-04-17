@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- encoding: utf-8 -*-
 
+import logging
 import socket
 import time
 import traceback
@@ -41,34 +42,14 @@ from internlm.utils.common import (
     parse_args,
 )
 from internlm.utils.gputest import empty_cache_and_diag
-from internlm.utils.logger import get_logger, initialize_uniscale_logger
+from internlm.utils.logger import get_logger
 from internlm.utils.megatron_timers import megatron_timer as timer
 from internlm.utils.parallel import get_parallel_log_file_name
 from internlm.utils.simple_memory_profiler import SimpleMemoryProfiler
 from internlm.utils.writer import Writer
 
 # global llm logger
-logger = get_logger(__file__)
-
-
-def initialize_llm_logger(start_time: str):
-    """
-    Initialize customed uniscale logger.
-
-    Args:
-        start_time (str): The launch time of current training job.
-
-    Returns: The instance of uniscale logger.
-    """
-
-    uniscale_logger = initialize_uniscale_logger(
-        job_name=gpc.config.JOB_NAME, launch_time=start_time, file_name=get_parallel_log_file_name()
-    )
-    if uniscale_logger is not None:
-        global logger
-        logger = uniscale_logger
-
-    return uniscale_logger
+logger = logging.getLogger(__file__)
 
 
 def main(args):
@@ -97,9 +78,10 @@ def main(args):
     objs = [current_time]
     dist.broadcast_object_list(objs, src=0)
     current_time = objs[0].replace(":", ".")
-
-    # initialize customed llm logger
-    uniscale_logger = initialize_llm_logger(start_time=current_time)
+    global logger
+    logger = get_logger(
+        __file__, launch_time=current_time, job_name=gpc.config.JOB_NAME, file_name=get_parallel_log_file_name()
+    )
 
     # initialize model
     model = initialize_model()
@@ -275,7 +257,6 @@ def main(args):
                 moe_loss=moe_loss,
                 grad_norm=grad_norm_groups,
                 metric=metric,
-                update_panel=uniscale_logger is not None,
             )
 
             timer("one-batch").stop()
@@ -288,7 +269,6 @@ def main(args):
                     writer=writer,
                     logger=logger,
                     step_count=train_state.step_count,
-                    update_panel=uniscale_logger is not None,
                 )
 
             # checkpoint the training states in specific steps, which is determined by the args "checkpoint_every"

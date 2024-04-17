@@ -11,11 +11,12 @@ from dataclasses import asdict
 
 import streamlit as st
 import torch
-
-from internlm.accelerator import get_accelerator
-from tools.interface import GenerationConfig, generate_interactive
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from transformers.utils import logging
+
+from internlm.accelerator import get_accelerator
+from internlm.utils.common import get_current_device
+from tools.interface import GenerationConfig, generate_interactive
 
 logger = logging.get_logger(__name__)
 internlm_accelerator = get_accelerator()
@@ -30,7 +31,7 @@ def load_model():
     model = (
         AutoModelForCausalLM.from_pretrained("internlm/internlm-chat-7b-v1_1", trust_remote_code=True)
         .to(torch.bfloat16)
-        .cuda()
+        .to(get_current_device())
     )
     tokenizer = AutoTokenizer.from_pretrained("internlm/internlm-chat-7b-v1_1", trust_remote_code=True)
     return model, tokenizer

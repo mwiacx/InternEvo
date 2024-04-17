@@ -2,6 +2,7 @@
 # -*- encoding: utf-8 -*-
 
 import functools
+import math
 import time
 from typing import Callable, Iterable, List, Optional, Tuple, TypeVar, Union
 
@@ -69,9 +70,10 @@ from internlm.model.moe.megablock.mlp import (
 from internlm.model.moe.moe import MoE
 from internlm.model.ops.norm import RMSNorm
 from internlm.model.registry import register_model_initializer
-from internlm.monitor import send_heartbeat, set_env_var
+from internlm.monitor import set_env_var
 from internlm.monitor.monitor import monitor_manager as mm
 from internlm.solver.optimizer import FSDPadaptOptimizer, HybridZeroOptimizer
+from internlm.solver.optimizer.compatible_adamw import new_compatible_adamw
 from internlm.solver.schedulers.beta2_scheduler import Beta2Scheduler
 from internlm.solver.schedulers.lr_scheduler import FineTuneCosineAnnealingWarmupLR
 from internlm.train.utils import create_param_groups
@@ -110,7 +112,7 @@ def set_fp32_attr_for_model(model: Union[nn.Module, nn.ModuleList]):
 
 
 def set_parallel_attr_for_param_groups(model: Union[nn.Module, nn.ModuleList]):
-    def _check_module(module):
+    def _check_module(name, module):
         # layer_norm
         if isinstance(module, (RMSNorm, nn.LayerNorm)):
             for param in module.parameters():
@@ -121,12 +123,8 @@ def set_parallel_attr_for_param_groups(model: Union[nn.Module, nn.ModuleList]):
                 setattr(param, IS_REPLICA_ZERO_PARALLEL, True)
 
         # embedding and head
-        if gpc.config.use_cuda_flash_attn:
-            from flash_attn.modules.embedding import ParallelGPT2Embeddings
 
-        if isinstance(module, (Embedding1D, ScaleColumnParallelLinear)) or (
-            gpc.config.use_cuda_flash_attn and isinstance(module, ParallelGPT2Embeddings)
-        ):
+        if isinstance(module, (Embedding1D, ScaleColumnParallelLinear)):
             for param in module.parameters():
                 if gpc.is_initialized(ParallelMode.TENSOR) and is_using_isp():
                     setattr(param, IS_TENSOR_DATA_PARALLEL, True)
@@ -147,10 +145,15 @@ def set_parallel_attr_for_param_groups(model: Union[nn.Module, nn.ModuleList]):
                 elif not is_moe_param(param) and gpc.is_initialized(ParallelMode.WEIGHT) and is_using_isp():
                     setattr(param, IS_WEIGHT_ZERO_PARALLEL, True)
 
+        # for vit and vit project
+        if "vision_tower" in name.lower() or "vision_proj" in name.lower():
+            for param in module.parameters():
+                setattr(param, IS_REPLICA_ZERO_PARALLEL, True)
+
     for _chunk in unwrap_naive_amp(model):
         # set param parallel attribute
         for name, module in _chunk.named_modules():
-            _check_module(module)
+            _check_module(name, module)
 
         for name, param in _chunk.named_parameters():
             assert (
@@ -229,15 +232,13 @@ def initialize_model(pre_process_func: Optional[Callable] = None, post_process_f
 
 
 def wrap_FSDP_model(model: Union[nn.Module, nn.ModuleList]):
-    if gpc.config.parallel.zero1.fsdp and gpc.config.model.use_flash_attn:
-        from flash_attn.modules.embedding import ParallelGPT2Embeddings
+    if gpc.config.parallel.zero1.fsdp:
 
         # set wrap_policy for fsdp wrap
         transformer_wrap_policy = functools.partial(
             transformer_auto_wrap_policy,
             transformer_layer_cls={
                 Embedding1D,
-                ParallelGPT2Embeddings,
                 MHA,
                 GQA,
                 RMSNorm,
@@ -305,7 +306,7 @@ def initialize_parallel_communicator(model: Union[nn.Module, nn.ModuleList]):
         # row parallel linear will not be used.
         RowParallelLinear.register_cls_communicator(None)
         _head_communicator = HeadSequenceParallelCommunicator(ParallelMode.TENSOR, _retain_out_sharded)
-        _embbeding_communicator = EmbbedingSequenceParallelCommunicator(ParallelMode.TENSOR)
+        _embedding_communicator = EmbbedingSequenceParallelCommunicator(ParallelMode.TENSOR)
 
     # register communictor for mtp/msp/fsp linear.
 
@@ -318,7 +319,7 @@ def initialize_parallel_communicator(model: Union[nn.Module, nn.ModuleList]):
             TensorParallelCommunicator(process_group=gpc.get_group(ParallelMode.TENSOR), role=LinearRole.ROW)
         )
         _head_communicator = HeadTensorParallelCommunicator(ParallelMode.TENSOR, _retain_out_sharded)
-        _embbeding_communicator = EmbbedingTensorParallelCommunicator(ParallelMode.TENSOR)
+        _embedding_communicator = EmbbedingTensorParallelCommunicator(ParallelMode.TENSOR)
     # sequence parallel
     if gpc.config.parallel.tensor.mode in ("msp", "fsp"):
         save_total_input_as_activation = gpc.config.parallel.tensor.mode == "msp"
@@ -341,7 +342,7 @@ def initialize_parallel_communicator(model: Union[nn.Module, nn.ModuleList]):
         _head_communicator = HeadSequenceParallelCommunicator(
             ParallelMode.TENSOR, _retain_out_sharded, save_total_input_as_activation
         )
-        _embbeding_communicator = EmbbedingSequenceParallelCommunicator(ParallelMode.TENSOR)
+        _embedding_communicator = EmbbedingSequenceParallelCommunicator(ParallelMode.TENSOR)
 
         # MoE sequence parallel
         if gpc.config.model.get("num_experts", 1) > 1:
@@ -360,9 +361,9 @@ def initialize_parallel_communicator(model: Union[nn.Module, nn.ModuleList]):
                 # 2. register MoESequenceParallelCommunicator for MoE layer
                 MoESequenceParallelCommunicator(ParallelMode.TENSOR).register_module_hook(moe)
 
-    # register communitorc for embbeding layer.
+    # register communitorc for embedding layer.
     for embedding in _submodule_filter(model, Embedding1D):
-        _embbeding_communicator.register_module_hook(embedding)
+        _embedding_communicator.register_module_hook(embedding)
 
     # register communictor for head layer.
     ScaleColumnParallelLinear.register_cls_communicator(_head_communicator)
@@ -388,23 +389,12 @@ def initialize_optimizer(model: Union[nn.Module, nn.ModuleList], isp_communicato
     grad_scal_cfg = gpc.config.grad_scaler
 
     params = create_param_groups(model, adam_cfg.weight_decay)
-    adam_extra_kwargs = {}
-    # set fused=True to avoid nan grad norm when model size is larger and use_fp32_norm=True
 
-    # TODO(caikun): add DIPU backend adamw
-    if internlm_accelerator.get_accelerator_backend() == AcceleratorType.NPU:
-        internlm_adamw = torch_npu.optim.NpuFusedAdamW
-    else:
-        internlm_adamw = torch.optim.AdamW
-        if torch.__version__ >= "2.1.0" and internlm_accelerator.get_accelerator_backend() == AcceleratorType.GPU:
-            adam_extra_kwargs["fused"] = True
-
-    naive_optimizer = internlm_adamw(
+    naive_optimizer = new_compatible_adamw(
         params=params,
         lr=adam_cfg.lr,
         betas=(adam_cfg.adam_beta1, adam_cfg.adam_beta2),
         eps=adam_cfg.adam_eps,
-        **adam_extra_kwargs,
     )
 
     if (
@@ -569,7 +559,6 @@ def record_current_batch_training_metrics(
     moe_loss,
     grad_norm,
     metric,
-    update_panel,
 ):
     """
     Print some training metrics of current batch.
@@ -591,6 +580,7 @@ def record_current_batch_training_metrics(
             scaler = trainer.engine.optimizer.optim.grad_scaler._scale.item()
 
         num_tokens_in_batch = batch[1].nelement()
+        real_num_tokens = math.ceil(acc_perplex.pop("real_token_num") / gpc.get_world_size(ParallelMode.GLOBAL))
         num_samples_in_batch = sum([len(b) - 1 for b in batch[0]["cu_seqlens"]])
         max_length_in_batch = max([(b[1:] - b[:-1]).max().item() for b in batch[0]["cu_seqlens"]])
         max_samples_in_batch = max([len(b) - 1 for b in batch[0]["cu_seqlens"]])
@@ -638,13 +628,18 @@ def record_current_batch_training_metrics(
         tgs_avg = round(tgs_statistic["sum_tgs"] / tgs_statistic["sum_step"], 2)
         tgs_SMA = round(tgs_statistic["SMA_tg_50"] / tgs_statistic["SMA_time_50"], 2)
 
-        tflops = get_tflops_func((time.time() - start_time))
+        tflops = get_tflops_func(time_cost)
 
         tgs_origin = round(
             num_tokens_in_batch
             * gpc.get_world_size(ParallelMode.DATA)
             / gpc.get_world_size(ParallelMode.GLOBAL)
-            / (time.time() - start_time),
+            / time_cost,
+            2,
+        )
+
+        real_tgs = round(
+            real_num_tokens / time_cost,
             2,
         )
 
@@ -652,6 +647,7 @@ def record_current_batch_training_metrics(
             "tflops": tflops,
             "step": batch_count,
             "loss": loss.item() - moe_loss.item() if moe_loss is not None else loss.item(),
+            "real_tgs": real_tgs,
             "tgs (tokens/gpu/second)": tgs_origin,
             "tgs/last_tgs_1": last_tgs_1,
             "tgs/tgs_all": tgs_all,
@@ -689,34 +685,7 @@ def record_current_batch_training_metrics(
             else:
                 writer.add_scalar(key=key, value=value, step=train_state.step_count)
 
-        if gpc.config.monitor.alert.get("light_monitor_address", None) and batch_count % 50 == 0:
-            send_heartbeat("train_metrics", infos)
-
-        if update_panel:
-            # metrics shown with dashboard panels
-            panel_metrics = {
-                "step": batch_count,
-                "lr": lr,
-                "num_consumed_tokens": train_state.num_consumed_tokens,
-                "loss": loss.item() - moe_loss.item() if moe_loss is not None else loss.item(),
-                "flops": tflops,
-                "tgs": last_tgs_1,
-                "acc": acc_perplex["acc"],
-                "perplexity": acc_perplex["perplexity"],
-                "fwd_bwd_time": fwd_bwd_time,
-            }
-            if moe_loss is not None:
-                panel_metrics["moe_loss"] = moe_loss.item()
-            for norm_key, norm_value in grad_norm.items():
-                panel_metrics[norm_key] = norm_value
-
-            logger.info(
-                "{line}",
-                line=line,
-                extra=panel_metrics,
-            )
-        else:
-            logger.info(line)
+        logger.info(line)
 
         # if loss spike occurs, send alert info to feishu
         mm.monitor_loss_spike(

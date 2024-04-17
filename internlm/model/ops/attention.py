@@ -33,10 +33,7 @@ except (ModuleNotFoundError, ImportError):
     is_torch_npu = False
 
 try:
-    from deeplink_ext.internlm_ops.mha import (
-        DeepLinkCrossAttention,
-        DeepLinkSelfAttention,
-    )
+    from deeplink_ext.internevo_ops import FlashCrossAttention, FlashSelfAttention
 
     deeplink_flash_attn_impl = True
 except (ModuleNotFoundError, ImportError):
@@ -457,7 +454,7 @@ class SelfAttention(nn.Module):
         softmax_scale = self.softmax_scale if softmax_scale is None else softmax_scale
         causal = self.causal if causal is None else causal
 
-        if gpc.config.get("use_cuda_flash_attn", False):
+        if gpc.config.model.get("use_flash_attn", False):
             if device_backend == AcceleratorType.GPU and gpu_flash_attn_impl:
                 return _flash_fixedlen_qkvpacked_attn(qkv, self.dropout.p, softmax_scale, causal)
             elif device_backend == AcceleratorType.NPU and is_torch_npu:
@@ -474,7 +471,7 @@ class SelfAttention(nn.Module):
         softmax_scale = self.softmax_scale if softmax_scale is None else softmax_scale
         causal = self.causal if causal is None else causal
 
-        if gpc.config.get("use_cuda_flash_attn", False):
+        if gpc.config.model.get("use_flash_attn", False):
             if device_backend == AcceleratorType.GPU and gpu_flash_attn_impl:
                 return _flash_fixedlen_kvpacked_attn(q, kv, self.dropout.p, softmax_scale, causal)
             elif device_backend == AcceleratorType.NPU and is_torch_npu:
@@ -491,7 +488,7 @@ class SelfAttention(nn.Module):
         softmax_scale = self.softmax_scale if softmax_scale is None else softmax_scale
         causal = self.causal if causal is None else causal
 
-        if gpc.config.get("use_cuda_flash_attn", False):
+        if gpc.config.model.get("use_flash_attn", False):
             if device_backend == AcceleratorType.GPU and gpu_flash_attn_impl:
                 return _flash_fixedlen_qkvsplited_attn(q, k, v, self.dropout.p, softmax_scale, causal)
             elif device_backend == AcceleratorType.NPU and is_torch_npu:
@@ -516,7 +513,7 @@ class SelfAttention(nn.Module):
         softmax_scale = self.softmax_scale if softmax_scale is None else softmax_scale
         causal = self.causal if causal is None else causal
 
-        if gpc.config.get("use_cuda_flash_attn", False):
+        if gpc.config.model.get("use_flash_attn", False):
             if device_backend == AcceleratorType.GPU and gpu_flash_attn_impl:
                 return _flash_varlen_qkvpacked_attn(qkv, cu_seqlens, max_seqlen, self.dropout.p, softmax_scale, causal)
             elif device_backend == AcceleratorType.NPU and is_torch_npu:
@@ -548,7 +545,7 @@ class SelfAttention(nn.Module):
         softmax_scale = self.softmax_scale if softmax_scale is None else softmax_scale
         causal = self.causal if causal is None else causal
 
-        if gpc.config.get("use_cuda_flash_attn", False):
+        if gpc.config.model.get("use_flash_attn", False):
             if device_backend == AcceleratorType.GPU and gpu_flash_attn_impl:
                 return _flash_varlen_kvpacked_attn(
                     q, kv, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k, self.dropout.p, softmax_scale, causal
@@ -594,7 +591,7 @@ class SelfAttention(nn.Module):
         softmax_scale = self.softmax_scale if softmax_scale is None else softmax_scale
         causal = self.causal if causal is None else causal
 
-        if gpc.config.get("use_cuda_flash_attn", False):
+        if gpc.config.model.get("use_flash_attn", False):
             if device_backend == AcceleratorType.GPU and gpu_flash_attn_impl:
                 return _flash_varlen_qkvsplited_attn(
                     q,
@@ -696,7 +693,7 @@ class CrossAttention(nn.Module):
         softmax_scale = self.softmax_scale if softmax_scale is None else softmax_scale
         causal = self.causal if causal is None else causal
 
-        if gpc.config.get("use_cuda_flash_attn", False):
+        if gpc.config.model.get("use_flash_attn", False):
             if device_backend == AcceleratorType.GPU and gpu_flash_attn_impl:
                 return _flash_fixedlen_kvpacked_attn(q, kv, self.dropout.p, softmax_scale, causal)
             elif device_backend == AcceleratorType.NPU and is_torch_npu:
@@ -713,7 +710,7 @@ class CrossAttention(nn.Module):
         softmax_scale = self.softmax_scale if softmax_scale is None else softmax_scale
         causal = self.causal if causal is None else causal
 
-        if gpc.config.get("use_cuda_flash_attn", False):
+        if gpc.config.model.get("use_flash_attn", False):
             if device_backend == AcceleratorType.GPU and gpu_flash_attn_impl:
                 return _flash_fixedlen_qkvsplited_attn(q, k, v, self.dropout.p, softmax_scale, causal)
             elif device_backend == AcceleratorType.NPU and is_torch_npu:
@@ -741,7 +738,7 @@ class CrossAttention(nn.Module):
         softmax_scale = self.softmax_scale if softmax_scale is None else softmax_scale
         causal = self.causal if causal is None else causal
 
-        if gpc.config.get("use_cuda_flash_attn", False):
+        if gpc.config.model.get("use_flash_attn", False):
             if device_backend == AcceleratorType.GPU and gpu_flash_attn_impl:
                 return _flash_varlen_kvpacked_attn(
                     q, kv, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k, self.dropout.p, softmax_scale, causal
@@ -787,7 +784,7 @@ class CrossAttention(nn.Module):
         softmax_scale = self.softmax_scale if softmax_scale is None else softmax_scale
         causal = self.causal if causal is None else causal
 
-        if gpc.config.get("use_cuda_flash_attn", False):
+        if gpc.config.model.get("use_flash_attn", False):
             if device_backend == AcceleratorType.GPU and gpu_flash_attn_impl:
                 return _flash_varlen_qkvsplited_attn(
                     q,

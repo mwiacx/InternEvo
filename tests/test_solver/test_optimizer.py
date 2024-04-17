@@ -82,7 +82,6 @@ config = Config(
             reduce_bucket_size=512 * 1024 * 1024,
             clip_grad_norm=1.0,
         ),
-        use_cuda_flash_attn=True,
     )
 )
 

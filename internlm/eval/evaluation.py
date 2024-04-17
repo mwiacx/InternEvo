@@ -48,7 +48,6 @@ def evaluate_on_val_dls(
     writer,
     logger,
     step_count,
-    update_panel: bool = False,
     streaming: bool = False,
 ):
     val_metric = AccPerplex(
@@ -123,20 +122,9 @@ def evaluate_on_val_dls(
                 for key, value in infos.items():
                     writer.add_scalar(key=key, value=value, step=step_count)
 
-                if update_panel:
-                    logger.info(
-                        f"Validation on {val_name}: " + " ".join([f"{key}={value}" for key, value in infos.items()]),
-                        extra={
-                            "step": step_count,
-                            "val_loss": val_loss,
-                            "val_acc": val_res["acc"],
-                            "val_perplexity": val_res["perplexity"],
-                        },
-                    )
-                else:
-                    logger.info(
-                        f"Validation on {val_name}: " + " ".join([f"{key}={value}" for key, value in infos.items()])
-                    )
+                logger.info(
+                    f"Validation on {val_name}: " + " ".join([f"{key}={value}" for key, value in infos.items()])
+                )
 
         trainer.train()
         internlm_accelerator.empty_cache()

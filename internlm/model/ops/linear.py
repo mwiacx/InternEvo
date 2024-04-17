@@ -28,10 +28,11 @@ def _select_ops_binding(dtype: torch.dtype, is_cuda: bool = True) -> None:
     dtype_eligible = dtype in (torch.float16, torch.bfloat16) or (
         dtype == torch.float32 and torch.is_autocast_enabled()
     )
-    use_cuda_flash_attn = gpc.config.get("use_cuda_flash_attn", False)
+    use_flash_attn = gpc.config.model.get("use_flash_attn", False)
+    is_gpu_backend = internlm_accelerator.get_accelerator_backend() is AcceleratorType.GPU
     flash_attn_eligible = flash_attn_impl and dtype_eligible and is_cuda
 
-    if use_cuda_flash_attn and flash_attn_eligible:
+    if use_flash_attn and is_gpu_backend and flash_attn_eligible:
         return _torch_linear_forward_op, _flash_linear_backward_op
     else:
         return _torch_linear_forward_op, _linear_bias_wgrad_torch

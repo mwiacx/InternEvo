@@ -20,7 +20,7 @@ except (ModuleNotFoundError, ImportError):
     flash_rotary_impl = False
 
 try:
-    from deeplink_ext.internlm_ops.rotary.deeplink import DeeplinkApplyRotaryEmb
+    from deeplink_ext.internlm_ops import ApplyRotaryEmb as DeeplinkApplyRotaryEmb
     deeplink_rotary_impl = True
 except (ModuleNotFoundError, ImportError):
     deeplink_rotary_impl = False
@@ -63,7 +63,7 @@ def _select_apply_rotary_func(
     out2: torch.Tensor,
     conj: bool = False,
 ):
-    if gpc.config.get("use_cuda_flash_attn", False) and flash_rotary_impl:
+    if gpc.config.model.get("use_flash_attn", False) and flash_rotary_impl:
         _flash_apply_rotary_func(x1, x2, cos, sin, out1, out2, conj)
     else:
         _torch_apply_rotary_func(x1, x2, cos, sin, out1, out2, conj)

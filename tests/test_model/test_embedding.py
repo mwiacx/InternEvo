@@ -5,14 +5,15 @@ import torch
 
 from internlm.model.modules.embedding import Embedding1D
 from internlm.utils.common import get_current_device
+from tests.common_fixture import find_free_port
 from tests.test_model.test_model_internlm import build_environment, seed_all
 
 
 def check_embedding(args):
     # init
-    rank, world_size = args
+    rank, world_size, free_port = args
     device = get_current_device()
-    build_environment(rank, world_size)
+    build_environment(rank, world_size, free_port)
     rtol, atol = (1e-3, 5e-3)
     vocab_size = 4
     hidden_size = 2
@@ -64,8 +65,9 @@ def check_embedding(args):
 @pytest.mark.embedding
 def test_embedding():
     ctx = mp.get_context("spawn")
+    free_port = str(find_free_port())
     with ctx.Pool(processes=8) as pool:
-        pool.map(check_embedding, [[rank, 8] for rank in range(8)])
+        pool.map(check_embedding, [[rank, 8, free_port] for rank in range(8)])
         pool.close()
         pool.join()
 

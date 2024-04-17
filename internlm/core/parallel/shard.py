@@ -44,7 +44,7 @@ def get_parallel_strategies_split_mode(linear_name: str) -> str:
         return "unknown"
 
 
-def _partition_uniform(num_items: int, pipeline_parallel_size: int, num_chunks: int):
+def partition_uniform(num_items: int, pipeline_parallel_size: int, num_chunks: int):
     assert (
         num_items % num_chunks == 0
     ), "Layer length should be divided by the number of chunks, otherwise parameter method is recomended"
@@ -87,7 +87,7 @@ def pipeline_parallel_sharding_wrapper(
     pipeline_size = gpc.get_world_size(ParallelMode.PIPELINE)
     pipeline_rank = gpc.get_local_rank(ParallelMode.PIPELINE)
 
-    all_parts = _partition_uniform(num_layers, pipeline_size, num_chunks)
+    all_parts = partition_uniform(num_layers, pipeline_size, num_chunks)
     parts = all_parts[pipeline_rank]
 
     if gpc.is_rank_for_log():

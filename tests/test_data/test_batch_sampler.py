@@ -175,7 +175,6 @@ def test_warmup(use_flash_atten_case, group_case, micro_bsz_case):
             adam=dict(lr=1e-4),
             resume_tb_folder=None,
             tensorboard_folder=None,
-            use_cuda_flash_attn=True,
         )
     )
 

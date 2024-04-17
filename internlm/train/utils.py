@@ -61,11 +61,11 @@ def split_params_into_different_groups_for_optimizer(
             if is_tensor_data_parallel_parameter(param):
                 # should not be here if not isp mode
                 new_groups["embed_head"]["params"].append(param)
-            elif param.dtype == torch.float32:
-                new_groups["fp32"]["params"].append(param)
             # moe param means MoE is enabled
             elif is_moe_param(param):
                 new_groups[param.group_name]["params"].append(param)
+            elif param.dtype == torch.float32 and gpc.config.model.dtype != torch.float32:
+                new_groups["fp32"]["params"].append(param)
             else:
                 origin_params.append(param)
 
@@ -80,5 +80,9 @@ def split_params_into_different_groups_for_optimizer(
 
 
 def create_param_groups(model, weight_decay):
-    parameters = {"params": list(model.parameters()), "name": "default", "weight_decay": weight_decay}
+    parameters = {
+        "params": [param for param in model.parameters() if param.requires_grad],
+        "name": "default",
+        "weight_decay": weight_decay,
+    }
     return split_params_into_different_groups_for_optimizer(parameters)

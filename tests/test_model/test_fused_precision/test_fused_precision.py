@@ -9,6 +9,7 @@ from internlm.core.naive_amp import NaiveAMPModel, set_fp32_attr_to_module
 from internlm.model.modeling_internlm import PackedFlashBaseLayer1D
 from internlm.train.utils import create_param_groups
 from internlm.utils.common import get_current_device
+from tests.common_fixture import find_free_port
 from tests.test_model.test_model_internlm import build_environment, seed_all
 
 
@@ -25,8 +26,8 @@ def _post_forward_hook_for_check(model, inputs, outputs):  # pylint: disable=W06
 
 def check_fused_precision(args):
     # init
-    rank, world_size = args
-    build_environment(rank, world_size)
+    rank, world_size, free_port = args
+    build_environment(rank, world_size, free_port)
     device = get_current_device()
 
     # fix seed
@@ -75,8 +76,8 @@ class MlpModel(nn.Module):
 
 def check_split_fused_group(args):
     # init
-    rank, world_size = args
-    build_environment(rank, world_size)
+    rank, world_size, free_port = args
+    build_environment(rank, world_size, free_port)
     device = get_current_device()
 
     rtol, atol = (1e-3, 5e-3)
@@ -111,8 +112,9 @@ def check_split_fused_group(args):
 @pytest.mark.fused_precision
 def test_fused_precision():
     ctx = mp.get_context("spawn")
+    free_port = str(find_free_port())
     with ctx.Pool(processes=8) as pool:
-        pool.map(check_fused_precision, [[rank, 8] for rank in range(8)])
+        pool.map(check_fused_precision, [[rank, 8, free_port] for rank in range(8)])
         pool.close()
         pool.join()
 
@@ -120,8 +122,9 @@ def test_fused_precision():
 @pytest.mark.split_groups
 def test_split_fused_groups():
     ctx = mp.get_context("spawn")
+    free_port = str(find_free_port())
     with ctx.Pool(processes=8) as pool:
-        pool.map(check_split_fused_group, [[rank, 8] for rank in range(8)])
+        pool.map(check_split_fused_group, [[rank, 8, free_port] for rank in range(8)])
         pool.close()
         pool.join()
 

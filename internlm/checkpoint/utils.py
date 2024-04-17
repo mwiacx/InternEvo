@@ -58,15 +58,12 @@ def get_model_topology(model):
         where name is the name of the module, and all parameters under this module are
         concatenated along the dimension 'dim'.
     """
-
-    from flash_attn.modules.embedding import VocabParallelEmbedding
-
     topos = {}
-    for name, module in model.named_modules():
-        # If it does not meet these conditions, it is shared between various tp/dp, and it is necessary to assert
+    for name, module in model.named_modules():  # pylint: disable=W0612
+        # TODO: If it does not meet these conditions, it is shared between various tp/dp, and it is necessary to assert
         # that they are consistent.
-        if isinstance(module, VocabParallelEmbedding):
-            topos[name] = {"dim": 0}
+        # In order to be compatible with CI, this function will not be deleted for now.
+        pass
     return topos
 
 

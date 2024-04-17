@@ -18,20 +18,22 @@ def split_fused_mlp_weight(w1_w3):
     return w1, w3
 
 
-def _mlp_pre_load_convert(module: "FeedForward", state_dict, *args, **kwargs) -> None:
-    if module.mlp_layer_fusion and "fused_w1_w3.weight" not in state_dict:
-        w1, w3 = state_dict.pop("w1.weight"), state_dict.pop("w3.weight")
-        state_dict["fused_w1_w3.weight"] = torch.cat([w1, w3], dim=0)
+def _mlp_pre_load_convert(module: "FeedForward", state_dict, prefix: str, *args, **kwargs) -> None:
+    w1_name, w3_name, fused_name = f"{prefix}w1.weight", f"{prefix}w3.weight", f"{prefix}fused_w1_w3.weight"
 
-    if not module.mlp_layer_fusion and ("w1.weight" not in state_dict or "w3.weight" not in state_dict):
-        state_dict["w1.weight"], state_dict["w3.weight"] = split_fused_mlp_weight(state_dict.pop("fused_w1_w3.weight"))
+    if module.mlp_layer_fusion and fused_name not in state_dict:
+        w1, w3 = state_dict.pop(w1_name), state_dict.pop(w3_name)
+        state_dict[fused_name] = torch.cat([w1, w3], dim=0)
+
+    if not module.mlp_layer_fusion and (w1_name not in state_dict or w3_name not in state_dict):
+        state_dict[w1_name], state_dict[w3_name] = split_fused_mlp_weight(state_dict.pop(fused_name))
 
 
-def _mlp_save_convert(module: "FeedForward", state_dict, *args, **kwargs) -> Dict:
+def _mlp_save_convert(module: "FeedForward", state_dict, prefix: str, *args, **kwargs) -> Dict:
+    w1_name, w3_name, fused_name = f"{prefix}w1.weight", f"{prefix}w3.weight", f"{prefix}fused_w1_w3.weight"
+
     if module.mlp_layer_fusion:
-        state_dict["w1.weight"], state_dict["w3.weight"] = split_fused_mlp_weight(
-            w1_w3=state_dict.pop("fused_w1_w3.weight")
-        )
+        state_dict[w1_name], state_dict[w3_name] = split_fused_mlp_weight(state_dict.pop(fused_name))
 
     return state_dict
 

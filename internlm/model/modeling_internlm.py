@@ -278,13 +278,13 @@ class InternLM1(nn.Module):
         super().__init__()
 
         checkpoint_layer_num = int(num_layers * checkpoint)
+        self.embed_grad_scale = embed_grad_scale
+        self.parallel_output = parallel_output
 
         if first:
             self.embedding = Embedding1D(num_embeddings=vocab_size, embedding_dim=hidden_size)
-
             for _, param in self.embedding.named_parameters():
                 normal_(std=0.0052)(param)
-        self.embed_grad_scale = embed_grad_scale
 
         self.blocks = nn.ModuleList(
             [
@@ -314,6 +314,7 @@ class InternLM1(nn.Module):
                 for lid in range(num_layers)
             ]
         )
+
         if last:
             self.norm = new_layer_norm(norm_type, hidden_size, eps=layer_norm_epsilon)
             self.head = new_linear(
@@ -330,11 +331,9 @@ class InternLM1(nn.Module):
             for _, param in self.head.named_parameters():
                 normal_(std=0.0052)(param)
 
-        self.parallel_output = parallel_output
-
     def forward(self, hidden_states=None, input_ids=None, **kwargs):
         # attention_mask: compute attention on the places where the value is 1
-        if hasattr(self, "embedding"):
+        if hasattr(self, "embedding") and input_ids is not None:
             hidden_states = self.embedding(input_ids)
             if self.embed_grad_scale != 1:
                 hidden_states = (

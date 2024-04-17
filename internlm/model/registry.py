@@ -6,6 +6,7 @@ from typing import Callable
 from internlm.model.modeling_internlm import InternLM1
 from internlm.model.modeling_internlm2 import InternLM2
 from internlm.model.modeling_llama import Llama2
+from internlm.model.modeling_llava import Llava
 from internlm.model.modeling_moe import Internlm1MoE
 
 
@@ -79,3 +80,4 @@ def register_model_initializer() -> None:
     model_initializer.register_module("INTERNLM2_PUBLIC", InternLM2)
     model_initializer.register_module("LLAMA2", Llama2)
     model_initializer.register_module("INTERNLM_MoE", Internlm1MoE)
+    model_initializer.register_module("LLAVA", Llava)

@@ -5,13 +5,14 @@ import torch
 
 from internlm.model.modules.norm import new_layer_norm
 from internlm.utils.common import get_current_device
+from tests.common_fixture import find_free_port
 from tests.test_model.test_model_internlm import build_environment, seed_all
 
 
 def check_norm(args):
     # init
-    rank, world_size = args
-    build_environment(rank, world_size)
+    rank, world_size, free_port = args
+    build_environment(rank, world_size, free_port)
     device = get_current_device()
     rtol, atol = (1e-3, 5e-3)
     hidden_size = 4
@@ -81,8 +82,9 @@ def check_norm(args):
 @pytest.mark.norm
 def test_norm():
     ctx = mp.get_context("spawn")
+    free_port = str(find_free_port())
     with ctx.Pool(processes=8) as pool:
-        pool.map(check_norm, [[rank, 8] for rank in range(8)])
+        pool.map(check_norm, [[rank, 8, free_port] for rank in range(8)])
         pool.close()
         pool.join()
 

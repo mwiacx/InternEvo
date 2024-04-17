@@ -8,12 +8,7 @@ import torch.nn.functional as F
 from einops import rearrange
 from torch import Tensor, nn
 
-from internlm.core.context import ParallelMode
 from internlm.core.context import global_context as gpc
-from internlm.core.parallel.comm.utils import (
-    gather_forward_split_backward,
-    split_forward_gather_backward,
-)
 from internlm.model.ops.rotary_emb import apply_rotary_emb
 
 
@@ -43,12 +38,11 @@ class Embedding1D(nn.Module):
 
         self.num_embeddings = num_embeddings
         self.embed_dim = embedding_dim
-        embed_dim_per_partition = embedding_dim // gpc.tensor_parallel_size
-
         self.padding_idx = padding_idx
         self.embed_args = args
         self.embed_kwargs = kwargs
 
+        embed_dim_per_partition = embedding_dim // gpc.tensor_parallel_size
         self.weight = nn.Parameter(torch.empty((num_embeddings, embed_dim_per_partition), dtype=dtype))
 
     def forward(self, input_: Tensor) -> Tensor:

@@ -110,17 +110,24 @@ def launch_time():
     return CURRENT_TIME
 
 
-def set_random_seed(seed):
-    """Set random seed for reproducability."""
+def set_random_seed(seed, cuda_deterministic=False):
+    """Set all random seed for reproducability."""
     # It is recommended to use this only when inference.
-    if seed is not None:
-        assert seed > 0
-        random.seed(seed)
-        np.random.seed(seed)
-        torch.manual_seed(seed)
+    assert seed > 0, f"Seed should be a positive integer, but got {seed}"
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if internlm_accelerator.is_available():
         internlm_accelerator.manual_seed(seed)
         # if you are using multi-GPU.
         internlm_accelerator.manual_seed_all(seed)
+
+    if cuda_deterministic:  # slower, more reproducible
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+    else:
+        torch.backends.cudnn.deterministic = False
+        torch.backends.cudnn.benchmark = True
 
 
 @contextmanager
@@ -210,10 +217,14 @@ def get_megatron_flops(
 
 def enable_pytorch_expandable_segments():
     if torch.__version__ >= "2.1.0" and AcceleratorType.GPU == internlm_accelerator.get_accelerator_backend():
-        _alloc_setting = "expandable_segments:True"
-        if os.getenv("PYTORCH_CUDA_ALLOC_CONF", None) is not None:
-            _alloc_setting = os.getenv("PYTORCH_CUDA_ALLOC_CONF") + "," + _alloc_setting
-        internlm_accelerator.memory._set_allocator_settings(_alloc_setting)
+        _expandable_segments_conf = "expandable_segments:True"
+        _alloc_conf = os.getenv("PYTORCH_CUDA_ALLOC_CONF", None)
+        if _alloc_conf is None:
+            _alloc_conf = _expandable_segments_conf
+        elif "max_split_size_mb" not in _alloc_conf:
+            _alloc_conf = _alloc_conf + "," + _expandable_segments_conf
+
+        internlm_accelerator.memory._set_allocator_settings(_alloc_conf)
     else:
         logger.warning("To support the 'expandable_segments' configuration, please upgrade torch to version 2.1.0.")
 
