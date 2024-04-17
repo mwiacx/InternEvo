@@ -59,8 +59,9 @@ def unpack_data(data, label):
 
     return data, label
 
+
 def packed_data_normalizer(data, label):
-    # Should we normalize packed data in this form of this data processor 
+    # Should we normalize packed data in this form of this data processor
     # or let the dataset handle it? Currently inclined towards the latter.
     assert data["input_ids"].shape[0] == 1, "data should be packed with batch size 1"
 

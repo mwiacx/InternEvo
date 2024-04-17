@@ -15,6 +15,7 @@ try:
 except (ModuleNotFoundError, ImportError):
     ops = None
 
+
 class MegaBlockMoE(BaseMoELayer):
     """
     Built on the paper and library Megablocks as described in

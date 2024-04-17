@@ -74,7 +74,7 @@ class MoE(torch.nn.Module):
             ep_size=ep_size,
             device=device,
             dtype=dtype,
-            **(gpc.config.moe)
+            **(gpc.config.moe),
         )
 
         # residual network, see https://arxiv.org/pdf/2201.05596.pdf, seems useful for convergence

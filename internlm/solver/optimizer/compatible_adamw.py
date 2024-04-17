@@ -1,4 +1,4 @@
-from typing import Optional, Tuple
+from typing import Tuple
 
 import torch
 
@@ -11,6 +11,8 @@ internlm_accelerator = get_accelerator()
 
 try:
     from torch_npu.optim import NpuFusedAdamW
+
+    del NpuFusedAdamW
 
     npu_adamw_impl = True
 except (ModuleNotFoundError, ImportError):

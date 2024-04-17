@@ -11,9 +11,9 @@ from internlm.model.losses import FlashGPTLMLoss
 from internlm.model.metrics import AccPerplex
 from internlm.train import (
     get_scheduler_hooks,
-    initialize_parallel_communicator,
     initialize_model,
     initialize_optimizer,
+    initialize_parallel_communicator,
 )
 from internlm.utils.logger import get_logger
 from tests.common_fixture import (

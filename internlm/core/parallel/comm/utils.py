@@ -28,9 +28,6 @@ class DummyAsyncCommHandle(AsyncCommHandle):
 
 
 DUMMY_HANDLE_CONST = DummyAsyncCommHandle()
-"""
-A shared dummy async communication handeles used to maintain consistency in code writing.
-"""
 
 
 # Raw operation, does not support autograd, but does support async
@@ -212,7 +209,7 @@ def reduce_scatter_raw(
 
     if world_size <= 1:
         return input_, None
-    
+
     shape_list = list(input_.shape)
     shape_list[reduce_dim] = shape_list[reduce_dim] // world_size
 

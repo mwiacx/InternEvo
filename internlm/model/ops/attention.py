@@ -33,7 +33,10 @@ except (ModuleNotFoundError, ImportError):
     is_torch_npu = False
 
 try:
+    # TODO: add support of deeplink
     from deeplink_ext.internevo_ops import FlashCrossAttention, FlashSelfAttention
+
+    del FlashCrossAttention, FlashSelfAttention
 
     deeplink_flash_attn_impl = True
 except (ModuleNotFoundError, ImportError):

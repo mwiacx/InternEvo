@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, Optional, Union
 import torch
 import torch.distributed as dist
 from torch import nn
-from torch.cuda.amp import custom_bwd, custom_fwd
 
 from internlm.accelerator import get_accelerator
 from internlm.core.context import ParallelMode

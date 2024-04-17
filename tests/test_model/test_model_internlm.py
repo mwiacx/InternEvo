@@ -327,7 +327,11 @@ def check_gather_forward(args):
     assert parallel_tensor in [1, 2]
     config.parallel.tensor = parallel_tensor
     build_environment(rank, world_size, free_port)
+    device = get_current_device()
+    rtol, atol = (1e-3, 5e-3)
+
     # fix seed
+    seed_all(1024)
 
     # load standard
     if parallel_tensor == 1:

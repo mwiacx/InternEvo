@@ -1,5 +1,3 @@
-import sys
-
 import torch
 
 from internlm.accelerator import get_accelerator

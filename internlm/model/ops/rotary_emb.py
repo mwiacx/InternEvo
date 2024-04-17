@@ -21,11 +21,13 @@ except (ModuleNotFoundError, ImportError):
 
 try:
     from deeplink_ext.internlm_ops import ApplyRotaryEmb as DeeplinkApplyRotaryEmb
+
     deeplink_rotary_impl = True
 except (ModuleNotFoundError, ImportError):
     deeplink_rotary_impl = False
 
 internlm_accelerator = get_accelerator()
+
 
 def _torch_apply_rotary_func(
     x1: torch.Tensor,

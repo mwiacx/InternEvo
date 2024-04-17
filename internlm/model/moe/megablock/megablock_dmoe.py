@@ -18,7 +18,6 @@ except (ModuleNotFoundError, ImportError):
     megablocks = None
 
 
-
 class MegaBlockdMoE(MegaBlockMoE):
     """
     Built on the paper and library Megablocks as described in

@@ -506,7 +506,6 @@ class GQA(nn.Module):
             k = rearrange(k, "b s (h d) -> b s h d", d=self.head_dim)
             v = rearrange(v, "b s (h d) -> b s h d", d=self.head_dim)
 
-
         # rotary embedding, output: q, kv
         assert self.rotary_emb_dim > 0
         if attention_mask is None:
