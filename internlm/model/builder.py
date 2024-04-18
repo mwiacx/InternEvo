@@ -29,7 +29,7 @@ def create_model(model_type, *args, **kwargs) -> Union[nn.Module, List[nn.Module
         kwargs["num_layers"] = num_layers
         model = model_buidler(*args, **kwargs).to(kwargs["device"])
         setattr(model, "first_layer", 0)
-        setattr(model, "last_layer", num_layers - 1)
+        setattr(model, "last_layer", num_layers)
     else:
         model = pipeline_parallel_sharding_wrapper(num_layers, num_chunks, model_buidler, *args, **kwargs)
 
