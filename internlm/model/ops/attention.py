@@ -70,7 +70,7 @@ internlm_accelerator = get_accelerator()
 device_backend = internlm_accelerator.get_accelerator_backend()
 
 
-def _nyi_attn(func_name, *args, **kwargs):
+def _nyi_attn(func_name, *args, **kwargs):  # pylint: disable=W0613
     assert False, f"{func_name} is not yet implemented"
 
 
@@ -203,8 +203,8 @@ def _npu_varlen_qkvsplited_attn(
     v: torch.Tensor,
     cu_seqlens_q,
     cu_seqlens_k,
-    max_seqlen_q,
-    max_seqlen_k,
+    max_seqlen_q,  # pylint: disable=W0613
+    max_seqlen_k,  # pylint: disable=W0613
     dropout_p=0.0,
     softmax_scale=None,
     causal=False,
@@ -255,7 +255,9 @@ def _npu_fixedlen_qkvsplited_attn(
     )
 
 
-def _npu_varlen_qkvpacked_attn(qkv: torch.Tensor, cu_seqlens, max_seqlen, dropout_p, softmax_scale=None, causal=False):
+def _npu_varlen_qkvpacked_attn(
+    qkv: torch.Tensor, cu_seqlens, max_seqlen, dropout_p, softmax_scale=None, causal=False  # pylint: disable=W0613
+):
     # TODO: support npu native varlen flash attention
     packed_length = qkv.size(dim=1)
 
@@ -276,8 +278,8 @@ def _npu_varlen_kvpacked_attn(
     kv: torch.Tensor,
     cu_seqlens_q,
     cu_seqlens_k,
-    max_seqlen_q,
-    max_seqlen_k,
+    max_seqlen_q,  # pylint: disable=W0613
+    max_seqlen_k,  # pylint: disable=W0613
     dropout_p=0.0,
     softmax_scale=None,
     causal=False,
@@ -680,7 +682,7 @@ class CrossAttention(nn.Module):
             assert self.causal, "Ascend flash attention does not support causal=False yet!"
 
     @params_dispatch_with_condition(condition=check_attention_argument)
-    def forward(self, obj: object):
+    def forward(self):
         """Placeholder for cross attention implementation.
 
         This method is a placeholder and should not be reached in execution as it is expected to be

@@ -89,6 +89,10 @@ class TPCommunicator(ABC):
 
 
 class TensorParallelCommunicator(TPCommunicator):
+    """
+    tensor parallel communicator for linear
+    """
+
     def __init__(self, process_group: dist.ProcessGroup, role: LinearRole) -> None:
         assert role in (LinearRole.COLUMN, LinearRole.ROW), f"Unknown linear role: {role}"
 
@@ -104,7 +108,7 @@ class TensorParallelCommunicator(TPCommunicator):
         return "tp"
 
     def input_hook(
-        self, _input: torch.Tensor, async_op: bool = False, is_forward: bool = True
+        self, _input: torch.Tensor, async_op: bool = False, is_forward: bool = True  # pylint: disable=W0613
     ) -> Tuple[torch.Tensor, AsyncCommHandle]:
         """
         tensor parallel should do nothing for input.
@@ -112,7 +116,7 @@ class TensorParallelCommunicator(TPCommunicator):
         return _input, DUMMY_HANDLE_CONST
 
     def grad_output_hook(
-        self, grad_output: torch.Tensor, async_op: bool = False
+        self, grad_output: torch.Tensor, async_op: bool = False  # pylint: disable=W0613
     ) -> Tuple[torch.Tensor, AsyncCommHandle]:
         """
         tensor parallel should do nothing for grad_output.
@@ -139,6 +143,10 @@ class TensorParallelCommunicator(TPCommunicator):
 
 
 class SequenceParallelCommunicator(TPCommunicator):
+    """
+    sequence parallel communicator for linear
+    """
+
     def __init__(
         self, process_group: dist.ProcessGroup, role: LinearRole, save_total_input_as_activation: bool = False
     ) -> None:
@@ -206,6 +214,10 @@ class SequenceParallelCommunicator(TPCommunicator):
 
 
 class HeadTensorParallelCommunicator(TensorParallelCommunicator):
+    """
+    tensor parallel communicator for head linear
+    """
+
     def __init__(self, parallel_mode: ParallelMode, retain_out_sharded: bool = True) -> None:
         super().__init__(process_group=gpc.get_group(parallel_mode), role=LinearRole.COLUMN)
 
@@ -213,7 +225,7 @@ class HeadTensorParallelCommunicator(TensorParallelCommunicator):
         self._retain_out_sharded = retain_out_sharded
 
     def grad_output_hook(
-        self, grad_output: torch.Tensor, async_op: bool = False
+        self, grad_output: torch.Tensor, async_op: bool = False  # pylint: disable=W0613
     ) -> Tuple[torch.Tensor, AsyncCommHandle]:
         """
         split grad_output if retain_out_sharded is False.
@@ -223,7 +235,9 @@ class HeadTensorParallelCommunicator(TensorParallelCommunicator):
 
         return _split(grad_output, parallel_mode=self._parallel_mode, dim=-1)
 
-    def output_hook(self, output: torch.Tensor, async_op: bool = False) -> Tuple[torch.Tensor, AsyncCommHandle]:
+    def output_hook(
+        self, output: torch.Tensor, async_op: bool = False  # pylint: disable=W0613
+    ) -> Tuple[torch.Tensor, AsyncCommHandle]:
         """
         all gather output for head layer if retain_out_sharded is False.
         """
@@ -234,6 +248,10 @@ class HeadTensorParallelCommunicator(TensorParallelCommunicator):
 
 
 class HeadSequenceParallelCommunicator(SequenceParallelCommunicator):
+    """
+    sequence parallel communicator for head linear
+    """
+
     def __init__(
         self, parallel_mode: ParallelMode, retain_out_sharded: bool = True, save_total_input_as_activation: bool = False
     ) -> None:
@@ -248,7 +266,7 @@ class HeadSequenceParallelCommunicator(SequenceParallelCommunicator):
 
     # rewrite grad_output communication hook
     def grad_output_hook(
-        self, grad_output: torch.Tensor, async_op: bool = False
+        self, grad_output: torch.Tensor, async_op: bool = False  # pylint: disable=W0613
     ) -> Tuple[torch.Tensor, AsyncCommHandle]:
         """
         split grad_output if retain_out_sharded is False.
@@ -259,7 +277,9 @@ class HeadSequenceParallelCommunicator(SequenceParallelCommunicator):
         return _split(grad_output, parallel_mode=self._parallel_mode, dim=-1)
 
     # rewrite ouput communication hook
-    def output_hook(self, output: torch.Tensor, async_op: bool = False) -> Tuple[torch.Tensor, AsyncCommHandle]:
+    def output_hook(
+        self, output: torch.Tensor, async_op: bool = False  # pylint: disable=W0613
+    ) -> Tuple[torch.Tensor, AsyncCommHandle]:
         """
         all gather output for head layer if retain_out_sharded is False.
         """
@@ -270,6 +290,10 @@ class HeadSequenceParallelCommunicator(SequenceParallelCommunicator):
 
 
 class MoESequenceParallelCommunicator:
+    """
+    sequence parallel communicator for moe layer
+    """
+
     def __init__(self, parallel_mode: ParallelMode) -> None:
         self._parallel_mode = parallel_mode
 
@@ -279,7 +303,7 @@ class MoESequenceParallelCommunicator:
         module.register_forward_pre_hook(self.input_hook, with_kwargs=True)
         module.register_forward_hook(self.output_hook)
 
-    def input_hook(self, module: MoE, args, kwargs) -> torch.Tensor:
+    def input_hook(self, module: MoE, args, kwargs) -> torch.Tensor:  # pylint: disable=W0613
         """
         allgather input before forward and split grad_input after backward.
         """
@@ -288,7 +312,7 @@ class MoESequenceParallelCommunicator:
 
         return (_input, *args), kwargs
 
-    def output_hook(self, module: MoE, args: Any, output: Tuple[Any]) -> Tuple[Any]:
+    def output_hook(self, module: MoE, args: Any, output: Tuple[Any]) -> Tuple[Any]:  # pylint: disable=W0613
         """
         split output after forward and allgather grad_output before backward.
         """
@@ -299,6 +323,10 @@ class MoESequenceParallelCommunicator:
 
 
 class EmbbedingTensorParallelCommunicator:
+    """
+    tensor parallel communicator for embbeding layer
+    """
+
     def __init__(self, parallel_mode: ParallelMode) -> None:
         self._parallel_mode = parallel_mode
 
@@ -307,7 +335,7 @@ class EmbbedingTensorParallelCommunicator:
 
         module.register_forward_hook(self.output_hook)
 
-    def output_hook(self, module: Embedding1D, args: Any, output: Tuple[Any]) -> Tuple[Any]:
+    def output_hook(self, module: Embedding1D, args: Any, output: Tuple[Any]) -> Tuple[Any]:  # pylint: disable=W0613
         """
         split output after forward and allgather grad_output before backward.
         """
@@ -317,6 +345,10 @@ class EmbbedingTensorParallelCommunicator:
 
 
 class EmbbedingSequenceParallelCommunicator:
+    """
+    sequence parallel communictor for embbeding layer
+    """
+
     def __init__(self, parallel_mode: ParallelMode) -> None:
         self._parallel_mode = parallel_mode
 
@@ -325,7 +357,7 @@ class EmbbedingSequenceParallelCommunicator:
 
         module.register_forward_hook(self.output_hook)
 
-    def output_hook(self, module: Embedding1D, args: Any, output: Tuple[Any]) -> Tuple[Any]:
+    def output_hook(self, module: Embedding1D, args: Any, output: Tuple[Any]) -> Tuple[Any]:  # pylint: disable=W0613
         """
         split output after forward and allgather grad_output before backward.
         """

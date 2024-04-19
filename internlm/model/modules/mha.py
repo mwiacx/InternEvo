@@ -193,7 +193,7 @@ class MHA(nn.Module):
 
         return q_packed, kv_packed, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k
 
-    def _inference(self, x, inference_params, **kwargs):
+    def _inference(self, x, inference_params, **kwargs):  # pylint: disable=W0613
         assert inference_params is not None, "inference_params is required for inference"
         assert self.layer_idx is not None, "Generation requires layer_idx in the constructor"
         attention_mask = inference_params.get("attention_mask", None)
@@ -225,8 +225,7 @@ class MHA(nn.Module):
                 if sequence_len_offset > self.max_position_embeddings:
                     logger.warning(
                         "Notice your prompt's length is longer than model's max_position_embeddings: "
-                        + "%s, which will cause deviations in dynamic ntk calculations.",
-                        self.max_position_embeddings,
+                        f"{self.max_position_embeddings}, which will cause deviations in dynamic ntk calculations."
                     )
 
                 if self.rotary_emb_dim > 0:
@@ -264,8 +263,7 @@ class MHA(nn.Module):
                     if sequence_len_offset > self.max_position_embeddings:
                         logger.warning(
                             "Notice your prompt's length is longer than model's max_position_embeddings: "
-                            + "%s, which will cause deviations in dynamic ntk calculations.",
-                            self.max_position_embeddings,
+                            f"{self.max_position_embeddings}, which will cause deviations in dynamic ntk calculations."
                         )
 
                     empties = attention_mask[..., -1].sum(dim=-1)
@@ -485,7 +483,7 @@ class GQA(nn.Module):
 
         return q_packed, kv_packed, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k
 
-    def _inference(self, x, inference_params, **kwargs):
+    def _inference(self, x, inference_params, **kwargs):  # pylint: disable=W0613
         assert inference_params is not None, "inference_params is required for inference"
         assert self.layer_idx is not None, "Generation requires layer_idx in the constructor"
         attention_mask = inference_params.get("attention_mask", None)

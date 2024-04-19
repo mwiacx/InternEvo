@@ -18,7 +18,9 @@ def split_fused_mlp_weight(w1_w3):
     return w1, w3
 
 
-def _mlp_pre_load_convert(module: "FeedForward", state_dict, prefix: str, *args, **kwargs) -> None:
+def _mlp_pre_load_convert(
+    module: "FeedForward", state_dict, prefix: str, *args, **kwargs  # pylint: disable=W0613
+) -> None:
     w1_name, w3_name, fused_name = f"{prefix}w1.weight", f"{prefix}w3.weight", f"{prefix}fused_w1_w3.weight"
 
     if module.mlp_layer_fusion and fused_name not in state_dict:
@@ -29,7 +31,7 @@ def _mlp_pre_load_convert(module: "FeedForward", state_dict, prefix: str, *args,
         state_dict[w1_name], state_dict[w3_name] = split_fused_mlp_weight(state_dict.pop(fused_name))
 
 
-def _mlp_save_convert(module: "FeedForward", state_dict, prefix: str, *args, **kwargs) -> Dict:
+def _mlp_save_convert(module: "FeedForward", state_dict, prefix: str, *args, **kwargs) -> Dict:  # pylint: disable=W0613
     w1_name, w3_name, fused_name = f"{prefix}w1.weight", f"{prefix}w3.weight", f"{prefix}fused_w1_w3.weight"
 
     if module.mlp_layer_fusion:

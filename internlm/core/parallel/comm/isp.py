@@ -592,35 +592,35 @@ class ISPCommunicatorSchedulerHook(SchedulerHook):
         self._isp_communicator = overlap_handler
         self._zero_optim = zero_optim
 
-    def before_forward(self, scheduler, inputs) -> None:
+    def before_forward(self, scheduler, inputs) -> None:  # pylint: disable=W0613
         self._isp_communicator.is_forward = True
         # switch model chunk before forward
         chunk_id = 0 if gpc.virtual_pipeline_parallel_rank is None else gpc.virtual_pipeline_parallel_rank
         self._isp_communicator.switch_current_model_chunk(chunk_id)
 
-    def after_forward(self, scheduler, outputs) -> None:
+    def after_forward(self, scheduler, outputs) -> None:  # pylint: disable=W0613
         pass
 
-    def before_criterion(self, scheduler, outputs, label) -> None:
+    def before_criterion(self, scheduler, outputs, label) -> None:  # pylint: disable=W0613
         pass
 
-    def after_criterion(self, scheduler, loss) -> None:
+    def after_criterion(self, scheduler, loss) -> None:  # pylint: disable=W0613
         pass
 
-    def before_backward(self, scheduler, outputs, outputs_grad) -> None:
+    def before_backward(self, scheduler, outputs, outputs_grad) -> None:  # pylint: disable=W0613
         self._isp_communicator.is_forward = False
         # switch model chunk before backward
         chunk_id = 0 if gpc.virtual_pipeline_parallel_rank is None else gpc.virtual_pipeline_parallel_rank
         self._isp_communicator.switch_current_model_chunk(chunk_id)
 
-    def after_backward(self, scheduler, inputs_grad) -> None:
+    def after_backward(self, scheduler, inputs_grad) -> None:  # pylint: disable=W0613
         # accumulate left gradients in last bucket after backward.
         self._zero_optim.accumulate_left_grads_after_backward()
         # reset lazy memory pools for reduce scatter after every micro step.
         if self._isp_communicator and self._isp_communicator.enable_memory_pool:
             self._isp_communicator.memory_pool.reset_lazy_pools()
 
-    def post_helper_func(self, scheduler, outputs, label) -> None:
+    def post_helper_func(self, scheduler, outputs, label) -> None:  # pylint: disable=W0613
         pass
 
 
@@ -672,7 +672,7 @@ class DistributedAttention(nn.Module):
         self.spg = sequence_process_group
 
     @params_dispatch_with_condition(condition=check_attention_argument)
-    def forward(self, obj: object) -> torch.Tensor:
+    def forward(self) -> torch.Tensor:
         assert False, "Should never arrive"
 
     @forward.register(conditions=(str(QKVPackType.QKVPACKED), str(CuSeqlenType.With)))

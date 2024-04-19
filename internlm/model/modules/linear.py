@@ -343,7 +343,7 @@ class ParallelLinearWithCommExt(nn.Linear):
         else:
             super().__init__(in_features, out_features, bias=bias, device=device, dtype=dtype)
 
-    def forward(self, input: torch.Tensor) -> torch.Tensor:
+    def forward(self, input: torch.Tensor) -> torch.Tensor:  # pylint: disable=W0622
         _class_name = self.__class__.__name__
         assert self._communicator is not None, f"{_class_name} should register with a communicator first."
 
