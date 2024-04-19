@@ -38,6 +38,7 @@ from internlm.train import (  # noqa: E402
     initialize_llm_profile,
     initialize_model,
     initialize_optimizer,
+    initialize_parallel_communicator,
     record_current_batch_training_metrics,
 )
 from internlm.utils.common import (  # noqa: E402
@@ -114,6 +115,7 @@ def main(args):
 
     # initialize model
     model = initialize_model()
+    _ = initialize_parallel_communicator(model)
 
     with open(args.config, "r") as f:
         config_lines = f.readlines()

@@ -17,7 +17,7 @@ from internlm.core.parallel.comm.tensor import (
     TensorParallelCommunicator,
 )
 from internlm.core.parallel.comm.utils import gather_forward_split_backward
-from internlm.model.modeling_internlm import PackedFlashBaseLayer1D
+from internlm.model.modeling_internlm import InternLM1Decoder
 from internlm.model.modules.linear import (
     ColumnParallelLinear,
     RowParallelLinear,
@@ -122,7 +122,7 @@ def check_block(args):
     # define block
     blocks = nn.ModuleList(
         [
-            PackedFlashBaseLayer1D(
+            InternLM1Decoder(
                 hidden_size=4,  # 768
                 num_attention_heads=2,  # 12
                 mlp_ratio=2,

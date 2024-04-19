@@ -270,7 +270,6 @@ def exam_loss(args):
 
     # initialize model
     model = initialize_model()
-
     _ = initialize_parallel_communicator(model)
 
     # initialize loss function

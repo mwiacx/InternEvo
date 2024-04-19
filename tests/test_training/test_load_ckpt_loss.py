@@ -221,8 +221,6 @@ def train_model(args):
     model = initialize_model()
     _ = initialize_parallel_communicator(model)
 
-    _ = initialize_parallel_communicator(model)
-
     # initialize loss function
     criterion = FlashGPTLMLoss(parallel_output=True, label_smoothing=gpc.config.loss.label_smoothing)
 

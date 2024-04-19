@@ -93,7 +93,7 @@ def init_naive_model():
     from internlm.core.naive_amp import NaiveAMPModel
     from internlm.model.builder import create_model
 
-    model = create_model(module_name=gpc.config.model_type, **(init_config.model))
+    model = create_model(model_type=gpc.config.model_type, **(init_config.model))
     model = NaiveAMPModel(
         model=model,
         output_to_fp32=False,
