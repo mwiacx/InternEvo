@@ -90,6 +90,7 @@ class InternLM1Decoder(nn.Module):
             embed_dim=hidden_size,
             num_heads=num_attention_heads,
             dropout=attn_drop_rate,
+            bias=True,
             max_position_embeddings=max_position_embeddings,
             softmax_scale=1 / math.sqrt(head_dim),
             causal=True,
@@ -101,6 +102,7 @@ class InternLM1Decoder(nn.Module):
             device=device,
             dtype=dtype,
             qk_interleaved=qk_interleaved,
+            enable_qkv_fusion=True,
         )
 
         # Compatible with the name of internlm1 Wqkv linear layer
