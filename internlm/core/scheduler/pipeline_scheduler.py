@@ -568,7 +568,7 @@ class PipelineScheduler(BaseScheduler):
         if num_1f1b_micropairs > 0:
             if not gpc.is_first_rank(ParallelMode.PIPELINE):
                 if forward_recv_shapes is None:
-                    forward_recv_shapes = comm.recv_obj_meta(forward_recv_shapes)
+                    forward_recv_shapes = comm.recv_obj_meta()
                 input_obj = comm.recv_forward(
                     forward_recv_shapes,
                     dtype=self.dtype,
@@ -970,7 +970,7 @@ class InterleavedPipelineScheduler(PipelineScheduler):
         """
         if not gpc.is_pipeline_first_stage():
             if self._input_obj_shapes[0] is None:
-                self._input_obj_shapes[0] = comm.recv_obj_meta(self._input_obj_shapes[0])
+                self._input_obj_shapes[0] = comm.recv_obj_meta()
             self._input_objs[0].append(
                 comm.recv_forward(
                     self._input_obj_shapes[0],
