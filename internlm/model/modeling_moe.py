@@ -18,6 +18,8 @@ from internlm.model.modules.mlp import new_feed_forward
 from internlm.model.modules.norm import new_layer_norm
 from internlm.model.moe.moe import MoE
 from internlm.model.utils import (
+    convert_attn_args_to_kwargs,
+    convert_attn_kwargs_to_args,
     internlm1_mha_pre_load_convert,
     internlm1_mha_save_convert,
 )
@@ -179,11 +181,13 @@ class Internlm1MoEDecoder(nn.Module):
     def forward(self, hidden_states, **kwargs):
         if self.checkpoint and self.training:
             # TODO: check whether this will be affected by moe
-            return activation_checkpoint(self._forward, False, hidden_states, **kwargs)
+            # NOTICE: activation_checkpiont do not support kwargs when use_reentrant = True.
+            args = convert_attn_kwargs_to_args(kwargs)
+            return activation_checkpoint(self._forward, False, hidden_states, *args)
         else:
             return self._forward(hidden_states, **kwargs)
 
-    def _forward(self, hidden_states=None, **kwargs):
+    def _forward(self, hidden_states, *args, **kwargs):
         r"""Pass the input through the encoder layer.
 
         Args:
@@ -207,7 +211,8 @@ class Internlm1MoEDecoder(nn.Module):
         if self.residual_in_fp32:
             residual = residual.to(torch.float32)
 
-        hidden_states = self.mixer(hidden_states, **kwargs)
+        mixer_kwargs = convert_attn_args_to_kwargs(args, kwargs)
+        hidden_states = self.mixer(hidden_states, **mixer_kwargs)
 
         def _dropout_and_norm_ffn(_residual, _hidden_states):
             _dropped = self.dropout2(_hidden_states)

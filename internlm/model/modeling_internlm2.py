@@ -18,6 +18,10 @@ from internlm.model.modules.linear import new_linear
 from internlm.model.modules.mha import GQA
 from internlm.model.modules.mlp import new_feed_forward
 from internlm.model.modules.norm import new_layer_norm
+from internlm.model.utils import (
+    convert_attn_args_to_kwargs,
+    convert_attn_kwargs_to_args,
+)
 from internlm.solver.activation_checkpoint import activation_checkpoint
 from internlm.utils.logger import get_logger
 
@@ -197,11 +201,13 @@ class InternLM2Decoder(nn.Module):
 
     def forward(self, hidden_states, residual=None, **kwargs):
         if self.checkpoint and self.training:
-            return activation_checkpoint(self._forward, False, hidden_states, residual, **kwargs)
+            # NOTICE: activation_checkpiont do not support kwargs when use_reentrant = True.
+            args = convert_attn_kwargs_to_args(kwargs)
+            return activation_checkpoint(self._forward, False, hidden_states, residual, *args)
         else:
             return self._forward(hidden_states, residual, **kwargs)
 
-    def _forward(self, hidden_states=None, residual=None, **kwargs):
+    def _forward(self, hidden_states, residual, *args, **kwargs):
         r"""Pass the input through the encoder layer.
 
         Args:
@@ -227,7 +233,8 @@ class InternLM2Decoder(nn.Module):
             if self.residual_in_fp32:
                 residual = residual.to(torch.float32)
 
-            hidden_states = self.attention(hidden_states, **kwargs)
+            attn_kwargs = convert_attn_args_to_kwargs(args, kwargs)
+            hidden_states = self.attention(hidden_states, **attn_kwargs)
 
             if not isinstance(self.feed_forward, nn.Identity):
                 if not self.fused_dropout_add_ln:
