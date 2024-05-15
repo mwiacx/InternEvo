@@ -140,10 +140,6 @@ class MHA(nn.Module):
         if self.enable_qkv_fusion:
             qkv = self.wqkv(x)
             qkv = rearrange(qkv, "b s (three h d) -> b s three h d", three=3, d=self.head_dim)
-
-            q = qkv[:, :, 0].squeeze(2)
-            k = qkv[:, :, 1].squeeze(2)
-            v = qkv[:, :, 2].squeeze(2)
         else:
             q, k, v = self.wq(x), self.wk(x), self.wv(x)
             q = rearrange(q, "b s (h d) -> b s h d", d=self.head_dim)
@@ -153,16 +149,24 @@ class MHA(nn.Module):
         # rotary embedding
         indexes = kwargs.pop("indexes", 0)
         max_seqlen = kwargs.get("max_seqlen", None)
-        q = self.rotary_emb(
-            q, offsets=indexes, cache_type="query", interleaved=self.interleaved, max_seqlen=max_seqlen, in_place=True
-        )
-        k = self.rotary_emb(
-            k, offsets=indexes, cache_type="key", interleaved=self.interleaved, max_seqlen=max_seqlen, in_place=True
-        )
+        if self.enable_qkv_fusion:
+            qkv = self.rotary_emb(
+                qkv, offsets=indexes, interleaved=self.interleaved, max_seqlen=max_seqlen, in_place=True
+            )
+        else:
+            q = self.rotary_emb(
+                q, offsets=indexes, cache_type="query", interleaved=self.interleaved, max_seqlen=max_seqlen
+            )
+            k = self.rotary_emb(
+                k, offsets=indexes, cache_type="query", interleaved=self.interleaved, max_seqlen=max_seqlen
+            )
 
         # self attention
-        kwargs = _convert_cu_seqlens_for_qksplited(kwargs)
-        context = self.inner_attn(q, k, v, **kwargs)
+        if self.enable_qkv_fusion:
+            context = self.inner_attn(qkv, **kwargs)
+        else:
+            kwargs = _convert_cu_seqlens_for_qksplited(kwargs)
+            context = self.inner_attn(q, k, v, **kwargs)
 
         # wo
         return self.out_proj(rearrange(context, "b s h d -> b s (h d)"))

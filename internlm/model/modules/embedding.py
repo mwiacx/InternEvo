@@ -9,7 +9,7 @@ from einops import rearrange
 from torch import Tensor, nn
 
 from internlm.core.context import global_context as gpc
-from internlm.model.ops.rotary_emb import apply_rotary_emb
+from internlm.model.ops.rotary_emb import apply_rotary_emb, apply_rotary_emb_qkv
 
 
 class Embedding1D(nn.Module):
@@ -178,17 +178,33 @@ class RotaryEmbedding(torch.nn.Module):
         assert cache_type in ("query", "key"), f"Unknown cache type {cache_type}"
         assert isinstance(offsets, (int, torch.Tensor)), f"Invalid offsets type {type(offsets)}"
 
+        if len(x.shape) == 5:
+            assert left_padding_mask is None, "rotary emb do not support left padding when qkvpacked"
+
         if left_padding_mask is not None:
             empties = left_padding_mask[..., -1].sum(dim=-1)
             x = self._convert_padding(x, empties, convert_type="left2right", in_place=in_place)
 
         self._update_cos_sin_cache(x, offsets, max_seqlen)
 
-        cos_cached = self._cos_k_cached if cache_type == "key" and self.scale is not None else self._cos_cached
-        sin_cached = self._sin_k_cached if cache_type == "key" and self.scale is not None else self._sin_cached
-        ret = apply_rotary_emb(
-            x, self._get_slice(cos_cached, offsets), self._get_slice(sin_cached, offsets), interleaved, in_place
-        )
+        if len(x.shape) == 5:  # qkv-packed, [batchsize, seqlen, 3, nhead, headdim]
+            _cos_k_cache = self._cos_cached if self.scale is None else self._cos_k_cached
+            _sin_k_cache = self._sin_cached if self.scale is None else self._sin_k_cached
+            ret = apply_rotary_emb_qkv(
+                x,
+                self._get_slice(self._cos_cached, offsets),
+                self._get_slice(self._sin_cached, offsets),
+                self._get_slice(_cos_k_cache, offsets),
+                self._get_slice(_sin_k_cache, offsets),
+                interleaved,
+                in_place,
+            )
+        else:  # [batchsize, seqlen, nhead, headdim]
+            cos_cached = self._cos_k_cached if cache_type == "key" and self.scale is not None else self._cos_cached
+            sin_cached = self._sin_k_cached if cache_type == "key" and self.scale is not None else self._sin_cached
+            ret = apply_rotary_emb(
+                x, self._get_slice(cos_cached, offsets), self._get_slice(sin_cached, offsets), interleaved, in_place
+            )
 
         if left_padding_mask is not None:
             ret = self._convert_padding(ret, empties, convert_type="right2left", in_place=in_place)

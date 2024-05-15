@@ -21,6 +21,9 @@ except (ModuleNotFoundError, ImportError):
 
 try:
     from deeplink_ext.internlm_ops import ApplyRotaryEmb as DeeplinkApplyRotaryEmb
+    from deeplink_ext.internlm_ops import (
+        ApplyRotaryEmbQKV_ as DeeplinkApplyRotaryEmbQKV,
+    )
 
     deeplink_rotary_impl = True
 except (ModuleNotFoundError, ImportError):
@@ -147,6 +150,79 @@ class ApplyRotaryEmb(torch.autograd.Function):
         return dx, None, None, None, None
 
 
+class ApplyRotaryEmbQKV(torch.autograd.Function):
+    """
+    ApplyRotaryEmbQKV_
+    """
+
+    @staticmethod
+    def forward(
+        ctx, qkv: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor, cos_k=None, sin_k=None, interleaved=False
+    ):
+        """
+            qkv: (batch_size, seqlen, 3, nheads, headdim)
+            cos, sin: (seqlen, rotary_dim / 2)
+            cos_k, sin_k: (seqlen, rotary_dim / 2), optional
+            interleaved: if True, rotate pairs of even and odd dimensions (GPT-J style) instead of
+                1st half and 2nd half (GPT-NeoX style).
+        rotary_dim must be <= headdim
+        Apply rotary embedding *inplace* to the first rotary_dim of q and k.
+        """
+        _, seqlen, three, _, headdim = qkv.shape
+        rotary_seqlen, rotary_dim = cos.shape
+        rotary_dim *= 2
+
+        assert three == 3
+        assert seqlen <= rotary_seqlen
+        assert rotary_dim <= headdim
+
+        cos_k = cos if cos_k is None else cos_k
+        sin_k = sin if sin_k is None else sin_k
+
+        assert sin.shape == sin_k.shape == (rotary_seqlen, rotary_dim // 2)
+
+        q_ro = qkv[:, :, 0, :, :rotary_dim]
+        q1, q2 = q_ro.chunk(2, dim=-1) if not interleaved else (q_ro[..., ::2], q_ro[..., 1::2])
+        re_cos = rearrange(cos[:seqlen], "s d -> s 1 d")
+        re_sin = rearrange(sin[:seqlen], "s d -> s 1 d")
+
+        _select_apply_rotary_func(q1, q2, re_cos, re_sin, q1, q2, False)
+
+        k_ro = qkv[:, :, 1, :, :rotary_dim]
+        k1, k2 = k_ro.chunk(2, dim=-1) if not interleaved else (k_ro[..., ::2], k_ro[..., 1::2])
+        re_cos_k = rearrange(cos_k[:seqlen], "s d -> s 1 d")
+        re_sin_k = rearrange(sin_k[:seqlen], "s d -> s 1 d")
+
+        _select_apply_rotary_func(k1, k2, re_cos_k, re_sin_k, k1, k2, False)
+
+        ctx.save_for_backward(cos, sin, cos_k, sin_k)
+        ctx.interleaved = interleaved
+        return qkv
+
+    @staticmethod
+    def backward(ctx, dqkv):
+        cos, sin, cos_k, sin_k = ctx.saved_tensors
+        seqlen = dqkv.shape[1]
+        rotary_dim = cos.shape[-1]
+        rotary_dim *= 2
+
+        dq_ro = dqkv[:, :, 0, :, :rotary_dim]
+        dq1, dq2 = dq_ro.chunk(2, dim=-1) if not ctx.interleaved else (dq_ro[..., ::2], dq_ro[..., 1::2])
+        re_cos = rearrange(cos[:seqlen], "s d -> s 1 d")
+        re_sin = rearrange(sin[:seqlen], "s d -> s 1 d")
+
+        _select_apply_rotary_func(dq1, dq2, re_cos, re_sin, dq1, dq2, True)
+
+        dk_ro = dqkv[:, :, 1, :, :rotary_dim]
+        dk1, dk2 = dk_ro.chunk(2, dim=-1) if not ctx.interleaved else (dk_ro[..., ::2], dk_ro[..., 1::2])
+        re_cos_k = rearrange(cos_k[:seqlen], "s d -> s 1 d")
+        re_sin_k = rearrange(sin_k[:seqlen], "s d -> s 1 d")
+
+        _select_apply_rotary_func(dk1, dk2, re_cos_k, re_sin_k, dk1, dk2, True)
+
+        return dqkv, None, None, None, None, None
+
+
 def apply_rotary_emb(
     x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor, interleaved: bool = False, in_place: bool = False
 ):
@@ -156,3 +232,21 @@ def apply_rotary_emb(
         return DeeplinkApplyRotaryEmb.apply(x, cos, sin, interleaved)
     else:
         return ApplyRotaryEmb.apply(x, cos, sin, interleaved, in_place)
+
+
+def apply_rotary_emb_qkv(
+    qkv: torch.Tensor,
+    cos: torch.Tensor,
+    sin: torch.Tensor,
+    cos_k=None,
+    sin_k=None,
+    interleaved=False,
+    in_place: bool = False,
+):
+    assert in_place is True, "in_place = False is not yet implement"
+
+    # TODO: Support deeplink in a more unified manner
+    if internlm_accelerator.get_accelerator_backend() == AcceleratorType.DIPU:
+        return DeeplinkApplyRotaryEmbQKV.apply(qkv, cos, sin, cos_k, sin_k, interleaved)
+    else:
+        return ApplyRotaryEmbQKV.apply(qkv, cos, sin, cos_k, sin_k, interleaved)
