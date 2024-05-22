@@ -14,6 +14,7 @@ NUM_LAYER = 2
 uly_sp=1
 ring_sp=8
 use_ring_attn="zigzag"  # none, basic, zigzag, full_kv_zigzag
+full_kv_zigzag_with_full_dkv=True
 
 MODEL_ONLY_FOLDER = "local:llm_ckpts/xxxx"
 # Ckpt folder format:
