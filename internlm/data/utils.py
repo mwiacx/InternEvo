@@ -5,9 +5,7 @@ import re
 
 import torch
 
-from internlm.core.context import ParallelMode
 from internlm.core.context import global_context as gpc
-from internlm.core.parallel.comm.utils import _split
 
 
 def get_dataset_type_ids_map(path):
@@ -68,9 +66,5 @@ def packed_data_normalizer(data, label):
     data["indexes"] = data["indexes"][0]
     data["cu_seqlens"] = data["cu_seqlens"][0].squeeze(0)
     data["max_seqlen"] = (data["cu_seqlens"][1:] - data["cu_seqlens"][:-1]).max().item()
-
-    # Move to parallel package for standardization
-    if gpc.config.parallel.sequence_parallel and gpc.config.parallel["tensor"].get("mode", "mtp") == "isp":
-        data["indexes"] = _split(data["indexes"], ParallelMode.TENSOR, dim=0)
 
     return data, label

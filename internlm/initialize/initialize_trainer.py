@@ -15,6 +15,7 @@ from internlm.core.context import ParallelMode
 from internlm.core.context import global_context as gpc
 from internlm.core.engine import Engine
 from internlm.core.gradient_handler import PipelineSharedModuleGradientHandler
+from internlm.core.parallel.shard import split_data_sequence_parallel
 from internlm.core.scheduler import (
     InterleavedPipelineScheduler,
     NonPipelineScheduler,
@@ -80,7 +81,25 @@ def initialize_trainer(
     # initialize scheduler for trainer
     scheduler = None
 
-    data_fn = packed_data_normalizer if gpc.config.data.use_packed_dataset else unpack_data
+    data_fns = []
+    # default data process function
+    if gpc.config.data.use_packed_dataset:
+        data_fns.append(packed_data_normalizer)
+    else:
+        data_fns.append(unpack_data)
+
+    # support sequence parallel
+    if gpc.config.parallel.sequence_parallel:
+        data_fns.append(split_data_sequence_parallel)
+
+    # TODO: support context parallel
+
+
+    def _data_preparation_func(_data, _label):
+        for fn in data_fns:
+            _data, _label = fn(_data, _label)
+
+        return _data, _label
 
     if gpc.is_using_parallel_mode(ParallelMode.PIPELINE):
         gpc.config.NUM_MICRO_BATCHES = gpc.config.data.micro_num
@@ -95,7 +114,7 @@ def initialize_trainer(
 
             communication_overlap = gpc.config.parallel["pipeline"].get("interleaved_overlap", False)
             scheduler = InterleavedPipelineScheduler(
-                data_process_func=data_fn,
+                data_process_func=_data_preparation_func,
                 num_microbatches=gpc.config.NUM_MICRO_BATCHES,
                 num_chunks=gpc.config.model.num_chunks,
                 dtype=gpc.config.model["dtype"],
@@ -106,7 +125,7 @@ def initialize_trainer(
             )
         else:
             scheduler = PipelineScheduler(
-                data_process_func=data_fn,
+                data_process_func=_data_preparation_func,
                 num_microbatches=gpc.config.NUM_MICRO_BATCHES,
                 dtype=gpc.config.model["dtype"],
                 tensor_shape=tensor_shape,
@@ -115,7 +134,7 @@ def initialize_trainer(
             )
     else:
         scheduler = NonPipelineScheduler(
-            data_process_func=data_fn,
+            data_process_func=_data_preparation_func,
             gradient_accumulation_size=gpc.config.data.gradient_accumulation,
             scheduler_hooks=scheduler_hooks,
         )

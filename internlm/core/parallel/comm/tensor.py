@@ -351,19 +351,67 @@ class EmbbedingSequenceParallelCommunicator:
 
     def __init__(self, parallel_mode: ParallelMode) -> None:
         self._parallel_mode = parallel_mode
+        self._emb_column = 1
+
+        self._module_weight = None
+        self._module = None
+        self._grad_buffer = None
+
+    def _print(self, msg):
+        if gpc.get_global_rank() == 0:
+            print(msg, flush=True)
+
+    def after_all(self):
+        self._module.weight = self._module_weight
+        self._module_weight.grad = self._grad_buffer
+        self._print(f"4444: {self._module_weight.grad}")
+        self._grad_buffer = None
 
     def register_module_hook(self, module: Embedding1D) -> None:
         assert isinstance(module, Embedding1D), "Embbeding sequence parallel communicator is only support Embedding1D"
 
-        module.register_forward_hook(self.output_hook)
+        module.register_forward_pre_hook(self.weight_gather_hook)
+        module.register_full_backward_pre_hook(self.weight_gather_hook)
+        module.register_forward_hook(self.weight_split_hook)
+        module.register_full_backward_hook(self.weight_split_hook)
 
-    def output_hook(self, module: Embedding1D, args: Any, output: Tuple[Any]) -> Tuple[Any]:  # pylint: disable=W0613
+        # module.weight.register_hook(self.grad_reduce_hook)
+        self._module = module
+        self._module_weight = module.weight
+
+        gpc.aaaaaa = self.after_all
+
+
+    # pre_forward  222
+    # forward
+    # post forward  333
+    # pre backward  222
+    # 1. backward -> [92544, 4096] grad
+    # 2. check
+    # post backward 333
+    # 3. module.weight.register_hook  111
+    # 4. accum
+    # 5. accum_obj.register_hook
+
+    def grad_reduce_hook(self, grad):
+        _grad, _ = reduce_scatter_raw(grad, gpc.get_group(self._parallel_mode), reduce_dim=self._emb_column)
+        if self._grad_buffer is None:
+            self._grad_buffer = _grad
+        else:
+            self._grad_buffer += _grad
+
+    def weight_gather_hook(self, module: Embedding1D, *args: Any):  # pylint: disable=W0613
         """
-        split output after forward and allgather grad_output before backward.
+        allgather embedding weight before forward and backward
         """
-        _emb_dim, _seq_dim = 2, 1  # [bsz, seqlen, emb_dim]
+        grad = module.weight.grad
+        module.weight = torch.nn.Parameter(_gather(module.weight.data, self._parallel_mode, dim=self._emb_column))
+        module.weight.requires_grad = True
+        module.weight.grad = grad
+        module.weight.register_hook(self.grad_reduce_hook)
 
-        output = gather_forward_split_backward(output, self._parallel_mode, dim=_emb_dim)
-        output = split_forward_gather_backward(output, self._parallel_mode, dim=_seq_dim)
-
-        return output
+    def weight_split_hook(self, module: Embedding1D, *args: Any):  # pylint: disable=W0613
+        grad = module.weight.grad
+        module.weight = torch.nn.Parameter(_split(module.weight.data, self._parallel_mode, dim=self._emb_column))
+        module.weight.requires_grad = True
+        module.weight.grad = grad
