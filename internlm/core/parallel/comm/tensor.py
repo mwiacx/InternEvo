@@ -424,8 +424,7 @@ class EmbbedingSequenceParallelCommunicator:
         module.weight.register_post_accumulate_grad_hook(self.grad_reduce_hook)
 
     def grad_reduce_hook(self, param: torch.Tensor):
-        # self.debug_print(f"4444: {param.shape}, {param.grad.shape}")
-        # import pdb; pdb.set_trace()
+
         _grad, _ = reduce_scatter_raw(
             param.grad, gpc.get_group(self.parallel_mode), op=dist.ReduceOp.AVG, reduce_dim=self.emb_column
         )
@@ -442,4 +441,3 @@ class EmbbedingSequenceParallelCommunicator:
             param.grad = param.evo_tensor.grad
             param.evo_tensor.grad = None
             self._cur_micro_step = 0
-            self.debug_print(f"6666: {param.grad}")
