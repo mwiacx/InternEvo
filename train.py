@@ -232,9 +232,6 @@ def main(args):
             if isp_communicator and isp_communicator.enable_memory_pool:
                 isp_communicator.memory_pool.reset_lazy_pools()
 
-            # remove it.
-            gpc.aaaaaa()
-
             # update parameters, and returns (success_update, grad_norm)
             trainer_result = trainer.step()
             assert trainer_result is not None

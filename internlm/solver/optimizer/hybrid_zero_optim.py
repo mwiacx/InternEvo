@@ -203,9 +203,10 @@ class HybridZeroOptimizer(BaseOptimizer):
                     tensor_list = self._param_store.get_fp16_params_by_rank_group(rank, group_id)
                     with torch.no_grad():
                         flat_tensor = flatten(tensor_list)
-                    flat_tensor = flat_tensor.data.to(get_current_device())
+                        flat_tensor = flat_tensor.data.to(get_current_device())
+                        sync_param(flat_tensor=flat_tensor, tensor_list=tensor_list)
+
                     self._param_store.add_flat_fp16_param_by_rank_group(rank, group_id, flat_tensor)
-                    sync_param(flat_tensor=flat_tensor, tensor_list=tensor_list)
 
             # create a copy of fp32 weights of the parameters for which this rank is responsible
             # No flat fp32 buffer is allocated if the process has no parameters.
@@ -344,8 +345,9 @@ class HybridZeroOptimizer(BaseOptimizer):
 
                     # get the AccumulateGrad object of the param itself
                     # If these objects are not kept, reduction hooks may not be attached successfully.
-                    accum_grad_obj = get_grad_accumulate_object(param)
-                    self._grad_store.add_accumulate_grad_object(accum_grad_obj)
+                    if not hasattr(param, "evo_tensor"):
+                        accum_grad_obj = get_grad_accumulate_object(param)
+                        self._grad_store.add_accumulate_grad_object(accum_grad_obj)
 
                     # the grad of layernorm should be all-reduce across the global process group
                     # here is the first stage all-reduce in tp/wp process group
@@ -364,10 +366,16 @@ class HybridZeroOptimizer(BaseOptimizer):
                         and self._isp_communicator.overlap
                         and gpc.config.parallel.weight.size > 1
                     ):
-                        accum_grad_obj.register_hook(accum_grad_hook)
+                        if hasattr(param, "evo_tensor"):
+                            param.register_post_accumulate_grad_hook(accum_grad_hook)
+                        else:
+                            accum_grad_obj.register_hook(accum_grad_hook)
 
                     if self._overlap_sync_grad:
-                        accum_grad_obj.register_hook(reduce_grad_hook)
+                        if hasattr(param, "evo_tensor"):
+                            param.register_post_accumulate_grad_hook(reduce_grad_hook)
+                        else:
+                            accum_grad_obj.register_hook(reduce_grad_hook)
 
                 _define_and_attach(param, reduce_rank)
 
