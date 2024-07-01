@@ -29,15 +29,17 @@ def split_data_sequence_parallel(data, label):
         data["indexes"] = _split(data["indexes"], ParallelMode.TENSOR, dim=_indexes_seq_dim)
 
     data["input_ids"] = _split(data["input_ids"], ParallelMode.TENSOR, dim=_seq_dim)
+    label = _split(label, ParallelMode.TENSOR, dim=_seq_dim)
 
     return data, label
 
+
 # The head layer in ISP mode is actually a special case,
 # and we would prefer a unified segmentation and communication logic.
-def get_tensor_split_parallel_mode(is_head: bool = False) -> ParallelMode:
+def get_tensor_split_parallel_mode() -> ParallelMode:
     tp_mode = gpc.config.parallel.tensor.mode
 
-    if tp_mode == "isp" and is_head is False:
+    if tp_mode == "isp":
         return ParallelMode.WEIGHT
     else:
         return ParallelMode.TENSOR

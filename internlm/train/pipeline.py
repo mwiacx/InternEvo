@@ -12,7 +12,6 @@ from torch.utils.data import DataLoader
 from internlm.accelerator import AcceleratorType, get_accelerator
 from internlm.core.context import (
     IS_REPLICA_ZERO_PARALLEL,
-    IS_TENSOR_DATA_PARALLEL,
     IS_TENSOR_EXPERT_DATA_PARALLEL,
     IS_TENSOR_ZERO_PARALLEL,
     IS_WEIGHT_ZERO_PARALLEL,
@@ -26,13 +25,15 @@ from internlm.core.naive_amp import (
     unwrap_naive_amp,
 )
 from internlm.core.parallel.comm.isp import (
+    EmbeddingWeightParallelCommunicator,
+    HeadWeightParallelCommunicator,
     ISPCommModelConfig,
     ISPCommunicator,
     ISPCommunicatorSchedulerHook,
 )
 from internlm.core.parallel.comm.tensor import (
-    EmbbedingSequenceParallelCommunicator,
-    EmbbedingTensorParallelCommunicator,
+    EmbeddingSequenceParallelCommunicator,
+    EmbeddingTensorParallelCommunicator,
     HeadSequenceParallelCommunicator,
     HeadTensorParallelCommunicator,
     LinearRole,
@@ -77,7 +78,6 @@ from internlm.utils.logger import get_logger
 from internlm.utils.megatron_timers import megatron_timer as timer
 from internlm.utils.parallel import (
     is_replica_zero_parallel_parameter,
-    is_tensor_data_parallel_parameter,
     is_tensor_expert_data_parallel_parameter,
     is_tensor_zero_parallel_parameter,
     is_using_isp,
@@ -118,11 +118,10 @@ def set_parallel_attr_for_param_groups(model: Union[nn.Module, nn.ModuleList]):
                 setattr(param, IS_REPLICA_ZERO_PARALLEL, True)
 
         # embedding and head
-
         if isinstance(module, (Embedding1D, ScaleColumnParallelLinear)):
             for param in module.parameters():
-                if gpc.is_initialized(ParallelMode.TENSOR) and is_using_isp():
-                    setattr(param, IS_TENSOR_DATA_PARALLEL, True)
+                if gpc.is_initialized(ParallelMode.WEIGHT) and is_using_isp():
+                    setattr(param, IS_WEIGHT_ZERO_PARALLEL, True)
                 elif gpc.is_initialized(ParallelMode.TENSOR) and not is_using_isp():
                     setattr(param, IS_TENSOR_ZERO_PARALLEL, True)
 
@@ -153,7 +152,6 @@ def set_parallel_attr_for_param_groups(model: Union[nn.Module, nn.ModuleList]):
         for name, param in _chunk.named_parameters():
             assert (
                 is_replica_zero_parallel_parameter(param)
-                or is_tensor_data_parallel_parameter(param)
                 or is_tensor_zero_parallel_parameter(param)
                 or is_weight_zero_parallel_parameter(param)
                 or is_tensor_expert_data_parallel_parameter(param)
@@ -262,8 +260,8 @@ def initialize_parallel_communicator(model: Union[nn.Module, nn.ModuleList]):
         ColumnParallelLinear.register_cls_communicator(isp_communicator)
         # row parallel linear will not be used.
         RowParallelLinear.register_cls_communicator(None)
-        _head_communicator = HeadSequenceParallelCommunicator(ParallelMode.TENSOR, _retain_out_sharded)
-        _embedding_communicator = EmbbedingSequenceParallelCommunicator(ParallelMode.TENSOR)
+        _head_communicator = HeadWeightParallelCommunicator(gpc.get_group(ParallelMode.WEIGHT))
+        _embedding_communicator = EmbeddingWeightParallelCommunicator(ParallelMode.WEIGHT)
 
     # register communictor for mtp/msp/fsp linear.
 
@@ -276,7 +274,7 @@ def initialize_parallel_communicator(model: Union[nn.Module, nn.ModuleList]):
             TensorParallelCommunicator(process_group=gpc.get_group(ParallelMode.TENSOR), role=LinearRole.ROW)
         )
         _head_communicator = HeadTensorParallelCommunicator(ParallelMode.TENSOR, _retain_out_sharded)
-        _embedding_communicator = EmbbedingTensorParallelCommunicator(ParallelMode.TENSOR)
+        _embedding_communicator = EmbeddingTensorParallelCommunicator(ParallelMode.TENSOR)
     # sequence parallel
     if gpc.config.parallel.tensor.mode in ("msp", "fsp"):
         save_total_input_as_activation = gpc.config.parallel.tensor.mode == "msp"
@@ -299,7 +297,8 @@ def initialize_parallel_communicator(model: Union[nn.Module, nn.ModuleList]):
         _head_communicator = HeadSequenceParallelCommunicator(
             ParallelMode.TENSOR, _retain_out_sharded, save_total_input_as_activation
         )
-        _embedding_communicator = EmbbedingSequenceParallelCommunicator(ParallelMode.TENSOR)
+
+        _embedding_communicator = EmbeddingSequenceParallelCommunicator(ParallelMode.TENSOR)
 
         # MoE sequence parallel
         if gpc.config.model.get("num_experts", 1) > 1:

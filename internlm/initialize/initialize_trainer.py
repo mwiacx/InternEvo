@@ -27,6 +27,7 @@ from internlm.data.utils import packed_data_normalizer, unpack_data
 from internlm.solver.optimizer.hybrid_zero_optim import BaseOptimizer
 from internlm.solver.schedulers.beta2_scheduler import Beta2Scheduler
 from internlm.utils.common import SchedulerHook, get_current_device
+from internlm.utils.parallel import is_using_isp
 
 
 def initialize_trainer(
@@ -88,12 +89,11 @@ def initialize_trainer(
     else:
         data_fns.append(unpack_data)
 
-    # support sequence parallel
-    if gpc.config.parallel.sequence_parallel:
+    # support sequence parallel for isp
+    if is_using_isp():
         data_fns.append(split_data_sequence_parallel)
 
     # TODO: support context parallel
-
 
     def _data_preparation_func(_data, _label):
         for fn in data_fns:

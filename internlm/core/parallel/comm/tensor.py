@@ -18,7 +18,6 @@ from internlm.core.parallel.comm.utils import (
     _split,
     all_gather_raw,
     all_reduce_raw,
-    apply_to_tensors_only,
     gather_forward_split_backward,
     reduce_scatter_raw,
     split_forward_gather_backward,
@@ -323,7 +322,7 @@ class MoESequenceParallelCommunicator:
         return (_output, *_others)
 
 
-class EmbbedingTensorParallelCommunicator:
+class EmbeddingTensorParallelCommunicator:
     """
     tensor parallel communicator for embbeding layer
     """
@@ -345,99 +344,26 @@ class EmbbedingTensorParallelCommunicator:
         return gather_forward_split_backward(output, self._parallel_mode, dim=_emb_dim)
 
 
-class EmbbedingSequenceParallelCommunicator:
+class EmbeddingSequenceParallelCommunicator:
     """
     sequence parallel communictor for embbeding layer
     """
 
     def __init__(self, parallel_mode: ParallelMode) -> None:
-        self.parallel_mode = parallel_mode
-        self.emb_column = 1
-
-        self._cur_micro_step = 0
-        self._num_micro_step = gpc.config.data.micro_num
-
-    def debug_print(self, msg):
-        if gpc.get_global_rank() == 0:
-            print(msg, flush=True)
+        self._parallel_mode = parallel_mode
 
     def register_module_hook(self, module: Embedding1D) -> None:
-        # assert isinstance(module, Embedding1D), "Embbeding sequence parallel communicator is only support Embedding1D"
+        assert isinstance(module, Embedding1D), "Embbeding sequence parallel communicator is only support Embedding1D"
 
-        module.__dict__["pre_module_wrapper_ref"] = 0
-        module.__dict__["post_module_wrapper_ref"] = 0
-        # module.weight.evo_tensor = partition
-        # module.weight.data = tensor(0)
-        module.weight.evo_tensor = None
+        module.register_forward_hook(self.output_hook)
 
-        class PreModuleWrapper(torch.autograd.Function):
+    def output_hook(self, module: Embedding1D, args: Any, output: Tuple[Any]) -> Tuple[Any]:  # pylint: disable=W0613
+        """
+        split output after forward and allgather grad_output before backward.
+        """
+        _emb_dim, _seq_dim = 2, 1  # [bsz, seqlen, emb_dim]
 
-            @staticmethod
-            def forward(ctx, output: torch.Tensor):
-                if module.weight.evo_tensor is None:
-                    module.weight.evo_tensor = module.weight.data
+        output = gather_forward_split_backward(output, self._parallel_mode, dim=_emb_dim)
+        output = split_forward_gather_backward(output, self._parallel_mode, dim=_seq_dim)
 
-                if module.pre_module_wrapper_ref == 0:
-                    module.weight.data = _gather(module.weight.data, self.parallel_mode, dim=self.emb_column)
-                    # self.debug_print(f"1111: {module.weight.shape}")
-                # module.pre_module_wrapper_ref += 1
-                output = output.detach()
-                return output
-
-            @staticmethod
-            def backward(ctx: Any, grad_output: torch.Tensor) -> torch.Tensor:
-                module.pre_module_wrapper_ref -= 1
-                if module.pre_module_wrapper_ref == 0:
-                    # module.weight.data = _split(module.weight, self.parallel_mode, dim=self.emb_column)
-                    module.weight.data = module.weight.evo_tensor
-                    self.debug_print(f"5555: {module.weight.shape}")
-                return grad_output
-
-        class PostModuleWrapper(torch.autograd.Function):
-
-            @staticmethod
-            def forward(ctx, output: torch.Tensor):
-                if module.post_module_wrapper_ref == 0:
-                    # module.weight.data = _split(module.weight.data, self.parallel_mode, dim=self.emb_column)
-                    module.weight.data = module.weight.evo_tensor
-                module.post_module_wrapper_ref += 1
-                output = output.detach()
-                return output
-
-            @staticmethod
-            def backward(ctx: Any, grad_output: torch.Tensor) -> torch.Tensor:
-                module.post_module_wrapper_ref -= 1
-                if module.post_module_wrapper_ref == 0:
-                    module.weight.data = _gather(module.weight, self.parallel_mode, dim=self.emb_column)
-                return grad_output
-
-        def _pre_forward_hook(module, inputs):
-            return apply_to_tensors_only(PreModuleWrapper.apply, inputs)
-
-        def _post_forward_hook(module, inputs, output):
-            return apply_to_tensors_only(PostModuleWrapper.apply, output)
-
-        module.register_forward_pre_hook(_pre_forward_hook)
-        module.register_forward_hook(_post_forward_hook)
-
-        # module.weight.register_hook()
-        module.weight.register_post_accumulate_grad_hook(self.grad_reduce_hook)
-
-    def grad_reduce_hook(self, param: torch.Tensor):
-
-        _grad, _ = reduce_scatter_raw(
-            param.grad, gpc.get_group(self.parallel_mode), op=dist.ReduceOp.AVG, reduce_dim=self.emb_column
-        )
-        if param.evo_tensor.grad is None:
-            param.evo_tensor.grad = _grad
-        else:
-            param.evo_tensor.grad += _grad
-
-        param.data = param.evo_tensor
-        param.grad = None
-
-        self._cur_micro_step += 1
-        if self._cur_micro_step == self._num_micro_step:
-            param.grad = param.evo_tensor.grad
-            param.evo_tensor.grad = None
-            self._cur_micro_step = 0
+        return output
