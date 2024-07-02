@@ -141,7 +141,7 @@ class VocabSequenceParallelCrossEntropyLoss(nn.Module):
         return loss
 
     def forward(self, _input, target):
-        assert input.is_cuda and target.is_cuda
+        assert _input.is_cuda and target.is_cuda
 
         _loss_list = vocab_sequence_parallel_cross_entropy(_input, target, self.label_smoothing)
 
