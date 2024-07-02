@@ -565,6 +565,7 @@ class ParallelContext(metaclass=SingletonMeta):
         initializers.append(pgroup_initializer.Initializer_Weight_Data(*initializer_args))
         initializers.append(pgroup_initializer.Initializer_Tensor(*initializer_args))
         initializers.append(pgroup_initializer.Initializer_Data(*initializer_args))
+        initializers.append(pgroup_initializer.Initializer_ISP_Data(*initializer_args))
         if isinstance(parallel_config["tensor"], dict) and parallel_config["tensor"]["mode"] == "isp":
             initializers.append(pgroup_initializer.Initializer_Zero1_ISP(*initializer_args))
         else:

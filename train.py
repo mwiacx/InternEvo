@@ -48,7 +48,7 @@ from internlm.utils.common import (
 from internlm.utils.gputest import empty_cache_and_diag
 from internlm.utils.logger import get_logger
 from internlm.utils.megatron_timers import megatron_timer as timer
-from internlm.utils.parallel import get_parallel_log_file_name
+from internlm.utils.parallel import get_parallel_log_file_name, is_using_isp
 from internlm.utils.simple_memory_profiler import SimpleMemoryProfiler
 from internlm.utils.writer import Writer
 
@@ -140,10 +140,12 @@ def main(args):
     )
 
     # initialize metric for calculating accuracy and perplexity
+    _dp_pg = gpc.get_group(ParallelMode.ISP_DATA) if is_using_isp() else gpc.get_group(ParallelMode.DATA)
+    _tp_pg = dist.new_group([gpc.get_global_rank()]) if is_using_isp() else gpc.get_group(ParallelMode.TENSOR)
     metric = AccPerplex(
         device=get_current_device(),
-        tp_pg=gpc.get_group(ParallelMode.TENSOR),
-        dp_pg=gpc.get_group(ParallelMode.DATA),
+        tp_pg=_tp_pg,
+        dp_pg=_dp_pg,
         dataset_types=dataset_types,
     )
 
