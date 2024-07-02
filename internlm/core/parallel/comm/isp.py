@@ -124,7 +124,7 @@ class EmbeddingWeightParallelCommunicator:
             """
 
             @staticmethod
-            def forward(ctx, inputs: torch.Tensor):
+            def forward(ctx, inputs: torch.Tensor):  # pylint: disable=W0613
                 if module.weight.evo_tensor is None:
                     module.weight.evo_tensor = module.weight.data
 
@@ -133,7 +133,7 @@ class EmbeddingWeightParallelCommunicator:
                 return inputs
 
             @staticmethod
-            def backward(ctx: Any, grad_input: torch.Tensor) -> torch.Tensor:
+            def backward(ctx: Any, grad_input: torch.Tensor) -> torch.Tensor:  # pylint: disable=W0613
                 # since input of embedding is int64 dtype, requires_grad=False, the backward fn may not be called
                 module.weight.data = module.weight.evo_tensor
                 return grad_input
@@ -144,13 +144,13 @@ class EmbeddingWeightParallelCommunicator:
             """
 
             @staticmethod
-            def forward(ctx, output: torch.Tensor):
+            def forward(ctx, output: torch.Tensor):  # pylint: disable=W0613
                 module.weight.data = module.weight.evo_tensor
                 output = output.detach()
                 return output
 
             @staticmethod
-            def backward(ctx: Any, grad_output: torch.Tensor) -> torch.Tensor:
+            def backward(ctx: Any, grad_output: torch.Tensor) -> torch.Tensor:  # pylint: disable=W0613
                 module.weight.data = _gather(module.weight, self.parallel_mode, dim=self.emb_column)
                 return grad_output
 
