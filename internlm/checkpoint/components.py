@@ -293,7 +293,7 @@ def load_optimizer_checkpoint(folder, optim):
     """
 
     fns = get_fns(folder)
-    max_tp, max_wp, max_pp, max_zero, max_dp = 0, 0, 0, 0, 0
+    max_tp, max_wp, max_pp, max_zero = 0, 0, 0, 0
     for fn in fns:
         if fn.startswith("optimizer_") and not fn.endswith(".md5"):
             if is_using_isp():

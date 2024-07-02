@@ -225,7 +225,8 @@ def reduce_scatter_raw(
     handle = dist.reduce_scatter_tensor(output, input_.contiguous(), op=op, group=process_group, async_op=async_op)
     return output, handle
 
-def apply_to_tensors_only(function, value, warning_msg_fn=None):
+
+def apply_to_tensors_only(function, value):
     """
     Apply `function` to every Tensor in `value`.
 

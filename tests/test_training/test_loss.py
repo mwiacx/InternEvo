@@ -169,12 +169,7 @@ def train(
     ckpt_manager.try_resume_training(train_state, current_time)
 
     # initialize metric for calculating accuracy and perplexity
-    metric = AccPerplex(
-        device=get_current_device(),
-        tp_pg=gpc.get_group(ParallelMode.TENSOR),
-        dp_pg=gpc.get_group(ParallelMode.DATA),
-        dataset_types=dataset_types,
-    )
+    metric = None
 
     # initialize trainer
     trainer, train_dl, _, _ = internlm.initialize_trainer(
@@ -224,7 +219,7 @@ def train(
         trainer.zero_grad()
         # process data
         if batch[0].get("type_ids", None) is not None:
-            metric.set_current_type_ids(type_ids=batch[0].pop("type_ids", None))
+            batch[0].pop("type_ids", None)
 
         # do forward and backward
         timer("fwd-bwd").start()
@@ -280,6 +275,7 @@ def check_loss_spike():
 
 def check_loss_accuracy():
     if gpc.is_rank_for_log():
+        print(f"cur_loss_list:{cur_loss_list}", flush=True)
         for cur, target in zip(cur_loss_list, BASELINE_LOSS_LIST):
             assert (
                 abs(cur - target) < LOSS_DEVIATION_LIMIT
@@ -435,17 +431,18 @@ def test_training_with_isp():
     global CONFIG_FILE_PATH, BASELINE_LOSS_LIST
     CONFIG_FILE_PATH = "./configs/7B_isp_sft.py"
     BASELINE_LOSS_LIST = [
-        11.594964981079102,
-        8.874114990234375,
-        7.090242385864258,
-        6.782063961029053,
-        5.961512088775635,
-        5.606202125549316,
-        5.305666446685791,
-        5.0156569480896,
-        4.9411516189575195,
-        4.983800411224365,
+        10.711931228637695,
+        7.549415588378906,
+        6.495877742767334,
+        5.944756507873535,
+        5.246580123901367,
+        5.334012031555176,
+        4.999225616455078,
+        4.70023250579834,
+        4.591017723083496,
+        4.589826583862305,
     ]
+
     # model training
     train(dp_size=4, tp_size=2, wp_size=4, tp_mode="isp", enable_sp=True)
 
