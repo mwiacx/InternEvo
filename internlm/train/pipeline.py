@@ -148,7 +148,7 @@ def set_parallel_attr_for_param_groups(model: Union[nn.Module, nn.ModuleList]):
         # TODO: check parallel attribute for hf model
         for param in module.parameters():
             if gpc.is_initialized(ParallelMode.TENSOR) and is_using_isp():
-                setattr(param, IS_TENSOR_DATA_PARALLEL, True)
+                setattr(param, IS_WEIGHT_ZERO_PARALLEL, True)
             elif gpc.is_initialized(ParallelMode.TENSOR) and not is_using_isp():
                 setattr(param, IS_TENSOR_ZERO_PARALLEL, True)
 
