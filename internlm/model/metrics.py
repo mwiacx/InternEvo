@@ -117,7 +117,7 @@ class AccPerplex:
     def set_current_type_ids(self, type_ids: torch.Tensor):
         self.batch_shift = 0
         if is_using_isp():
-            step_seqlen = gpc.config.data.seq_len // gpc.get_world_size(ParallelMode.TENSOR)
+            step_seqlen = type_ids.shape[1] // gpc.get_world_size(ParallelMode.TENSOR)
             sp_rank = gpc.get_local_rank(ParallelMode.TENSOR)
             type_ids = type_ids[:, step_seqlen * sp_rank : step_seqlen * (sp_rank + 1)]
         self.type_ids = type_ids.to(get_current_device())
@@ -303,7 +303,7 @@ class LossWithTypeId:
 
             # get current rank part loss_list
             if is_using_isp():
-                step_seqlen = gpc.config.data.seq_len // gpc.get_world_size(ParallelMode.TENSOR)
+                step_seqlen = logits.shape[0]
                 sp_rank = gpc.get_local_rank(ParallelMode.TENSOR)
                 loss_list = loss_list[step_seqlen * sp_rank : step_seqlen * (sp_rank + 1)]
 
