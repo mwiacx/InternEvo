@@ -49,6 +49,10 @@ def unpack_type_ids(type_ids, cu_seqlens):
 
 
 def unpack_data(data, label):
+
+    if gpc.config.model_type == "hf":
+        return data, label
+
     data["input_ids"] = _unpack_data(data["input_ids"], data["cu_seqlens"], padding_v=0).squeeze(0)
     label = _unpack_data(label, data["cu_seqlens"], padding_v=-100).squeeze(0)
 
@@ -66,5 +70,13 @@ def packed_data_normalizer(data, label):
     data["indexes"] = data["indexes"][0]
     data["cu_seqlens"] = data["cu_seqlens"][0].squeeze(0)
     data["max_seqlen"] = (data["cu_seqlens"][1:] - data["cu_seqlens"][:-1]).max().item()
+
+    if gpc.config.model_type == "hf":
+        data.pop("cu_seqlens")
+        data.pop("max_seqlen")
+        data["position_ids"] = data.pop("indexes")
+        data["attention_mask"] = torch.ones(
+            (data["input_ids"].shape), dtype=torch.bool, device=data["input_ids"].device
+        )
 
     return data, label

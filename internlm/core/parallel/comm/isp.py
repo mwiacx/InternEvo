@@ -384,8 +384,12 @@ class ISPCommunicator(WPCommunicator):
     def _parse_model_structure(self, cid: int, model: nn.Module) -> None:
         self._overlap_states[cid] = ISPOverlapState()
 
+        def get_model(obj: nn.Module) -> nn.Module:
+            return get_model(obj.model) if hasattr(obj, "model") else obj
+
         # Important: only works for llama-class models
-        for _, children in model.named_children():
+        children_name = get_model(model).named_children()
+        for _, children in children_name:
             if isinstance(children, nn.ModuleList):
                 self._overlap_states[cid].ckpt_block_num = int(self.model_conf.activation_checkpointing * len(children))
 
