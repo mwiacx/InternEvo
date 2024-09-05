@@ -199,11 +199,11 @@ class _ReduceForward(torch.autograd.Function):
         return _reduce(input_, parallel_mode=None)
 
     @staticmethod
-    def forward(ctx, input_, parallel_mode):
+    def forward(ctx, input_, parallel_mode):  # pylint: disable=W0613
         return _reduce(input_, parallel_mode)
 
     @staticmethod
-    def backward(ctx, grad_output):
+    def backward(ctx, grad_output):  # pylint: disable=W0613
         return grad_output, None
 
 
