@@ -46,38 +46,29 @@ class Embedding1D(nn.Module):
         self.embed_kwargs = kwargs
         self.vocab_parallel = vocab_parallel
 
-        if is_using_isp():
-            # isp: split vocab_size to support the sharing of parameters between embedding and head.
-            assert (
-                num_embeddings % gpc.weight_parallel_size == 0
-            ), f"{num_embeddings} is not divisible by {gpc.weight_parallel_size}"
-            self.num_embeddings_per_partition = num_embeddings // gpc.weight_parallel_size
-            self.embed_dim_per_partition = embedding_dim
-        elif vocab_parallel:
+        parallel_size = gpc.weight_parallel_size if is_using_isp() else gpc.tensor_parallel_size
 
-            assert (
-                num_embeddings % gpc.tensor_parallel_size == 0
-            ), f"{num_embeddings} is not divisible by {gpc.tensor_parallel_size}"
+        if vocab_parallel:
+            assert num_embeddings % parallel_size == 0, f"{num_embeddings} is not divisible by {parallel_size}"
 
-            self.num_embeddings_per_partition = num_embeddings // gpc.tensor_parallel_size
+            self.num_embeddings_per_partition = num_embeddings // parallel_size
             self.embed_dim_per_partition = embedding_dim
             self.vocab_start_index = gpc.get_local_rank(ParallelMode.TENSOR) * self.num_embeddings_per_partition
             self.vocab_end_index = self.vocab_start_index + self.num_embeddings_per_partition
         else:
-            # mtp/msp/fsp: do not support the sharing of parameters between embedding and head,
-            # use VocabParallelEmbedding1D instead.
-            assert (
-                embedding_dim % gpc.tensor_parallel_size == 0
-            ), f"{embedding_dim} is not divisible by {gpc.tensor_parallel_size}"
+            assert embedding_dim % parallel_size == 0, f"{embedding_dim} is not divisible by {parallel_size}"
+
             self.num_embeddings_per_partition = num_embeddings
-            self.embed_dim_per_partition = embedding_dim // gpc.tensor_parallel_size
+            self.embed_dim_per_partition = embedding_dim // parallel_size
+            self.vocab_start_index = 0
+            self.vocab_end_index = self.num_embeddings_per_partition
 
         self.weight = nn.Parameter(
             torch.empty((self.num_embeddings_per_partition, self.embed_dim_per_partition), dtype=dtype)
         )
 
     def forward(self, input_: Tensor) -> Tensor:
-        if self.vocab_parallel:
+        if self.vocab_parallel and not is_using_isp():
             # Build the mask.
             input_mask = (input_ < self.vocab_start_index) | (input_ >= self.vocab_end_index)
             # Mask the input.
@@ -88,7 +79,7 @@ class Embedding1D(nn.Module):
 
         output = F.embedding(masked_input, self.weight, self.padding_idx, *self.embed_args, **self.embed_kwargs)
 
-        if self.vocab_parallel:
+        if self.vocab_parallel and not is_using_isp():
             output[input_mask, :] = 0.0
 
         return output
