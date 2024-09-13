@@ -2,7 +2,6 @@
 # -*- encoding: utf-8 -*-
 
 from abc import ABC, abstractmethod
-from typing import Callable
 
 import torch
 import torch.distributed as dist
