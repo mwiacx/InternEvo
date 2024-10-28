@@ -4,6 +4,7 @@
 # adopted from https://github.com/hpcaitech/ColossalAI/blob/main/colossalai/context
 
 import inspect
+import math
 import random
 import socket
 import sys
@@ -22,7 +23,14 @@ from internlm.utils.timeout import LLM_NCCL_TIMEOUT
 from internlm.utils.utils import TensorParallelMode
 
 from . import process_group_initializer as pgroup_initializer
-from .process_group_initializer import ParallelMode
+from .process_group_initializer import (
+    GroupConfig,
+    ParallelMode,
+    create_parallel_process_groups,
+    create_single_process_group,
+    generate_2d_attn_group_configs,
+    generate_parallel_group_configs,
+)
 from .random import add_seed, get_seeds, set_mode
 
 # for layernorm
@@ -639,15 +647,101 @@ class ParallelContext(metaclass=SingletonMeta):
             parallel_config.sequence_2D,
         ]
 
+        parallel_sizes = {
+            ParallelMode.TENSOR: self.tensor_parallel_size,
+            ParallelMode.SEQUENCE: self.sequence_parallel_size,
+            ParallelMode.PIPELINE: self.pipeline_parallel_size,
+            ParallelMode.DATA: self.data_parallel_size,
+            ParallelMode.ZERO1: self.zero1_parallel_size,
+            ParallelMode.WEIGHT: self.weight_parallel_size,
+            ParallelMode.WEIGHT_DATA: self.weight_data_parallel_size,
+            ParallelMode.NETTEST: self.nettest_parallel_size,  # FIXME: impl it.
+            ParallelMode.EXPERT: self.expert_parallel_size,  # FIXME: anonymous?
+            ParallelMode.EXPERT_WEIGHT: self.expert_weight_parallel_size,
+            ParallelMode.EXPERT_TENSOR: self.expert_tensor_parallel_size,
+            ParallelMode.EXPERT_DATA: self.expert_data_parallel_size,
+        }
+
+        # process groups for parallelism.
+        enable_moe = self.config.model.get("num_experts", 1) > 1
+        parallel_strategy = "fsdp" if parallel_config.zero1.get("fsdp", False) else parallel_config.tensor.mode
+        group_configs = generate_parallel_group_configs(parallel_strategy, parallel_sizes, enable_moe)
+        group_results = create_parallel_process_groups(world_size, rank, group_configs, with_cpu_group=False)
+
+        # process group for extra gqa tensor parallel.
+        if (
+            "num_kv_attention_heads" in self.config.model
+            and self.config.model.num_kv_attention_heads < self.tensor_parallel_size
+        ):
+            group_results.append(
+                create_single_process_group(
+                    world_size,
+                    rank,
+                    GroupConfig(ParallelMode.GQA, self.tensor_parallel_size // self.num_kv_attention_heads),
+                )
+            )
+
+        # process group for network test.
+        group_results.append(
+            create_single_process_group(
+                world_size,
+                rank,
+                GroupConfig(ParallelMode.NETTEST, self.nettest_parallel_size, allow_partial_group=True),
+            )
+        )
+
+        # process group for isp 2D attn.
+        if parallel_config.sequence_2D.get("enable", False) is True:
+            group_results.extend(
+                generate_2d_attn_group_configs(world_size, rank, parallel_config.sequence_2D, parallel_sizes)
+            )
+
+        # print(f"rank{rank}: group_results={group_results}", flush=True)
+
+        def _check_helper(result) -> bool:
+            try:
+                _idx = [_r[-1] for _r in group_results].index(result[-1])
+            except ValueError:
+                return
+
+            new_res = group_results[_idx]
+
+            for _idx in range(len(new_res)):
+                if isinstance(new_res[_idx], dist.ProcessGroup):
+                    assert (
+                        new_res[_idx].size() == result[_idx].size()
+                    ), f"rank{rank}: assert failed, mode={new_res[-1]}, {new_res[_idx]} != {result[_idx]}"
+                else:
+                    assert (
+                        new_res[_idx] == result[_idx]
+                    ), f"rank{rank}: assert failed, mode={new_res[-1]}, idx={_idx}, {new_res} != {result}"
+
+            if rank == 0:
+                print(f"{result[-1]} assert passed", flush=True)
+
+        old_group_results = self._old_process_group_allocation(parallel_config, initializer_args)
+        for res in old_group_results:
+            _check_helper(res)
+
+        # register process groups
+        for result in group_results:
+            self._register_dist(*result)
+
+        # FIXME: remove it after unit-test.
+        exit(-1)
+
+    # FIXME: remove it after unit-test.
+    def _old_process_group_allocation(self, parallel_config, initializer_args):
         # run initialization of different process groups
-        initializers = []
+        initializers, group_results = [], []
+
         if "gqa" in parallel_config and parallel_config["gqa"] is True:
             initializers.append(pgroup_initializer.Initializer_GQA(*initializer_args))
         initializers.append(pgroup_initializer.Initializer_Weight(*initializer_args))
         initializers.append(pgroup_initializer.Initializer_Weight_Data(*initializer_args))
         initializers.append(pgroup_initializer.Initializer_Tensor(*initializer_args))
         initializers.append(pgroup_initializer.Initializer_Data(*initializer_args))
-        initializers.append(pgroup_initializer.Initializer_ISP_Data(*initializer_args))
+        initializers.append(pgroup_initializer.Initializer_ISP_Data(*initializer_args))  # FIXME: ???
         if (
             isinstance(parallel_config["tensor"], dict)
             and parallel_config["tensor"]["mode"] == TensorParallelMode.isp.name
@@ -671,10 +765,11 @@ class ParallelContext(metaclass=SingletonMeta):
         for initializer in initializers:
             parallel_setting = initializer.init_dist_group()
             if isinstance(parallel_setting, list):
-                for args in parallel_setting:
-                    self._register_dist(*args)
+                group_results.extend(parallel_setting)
             else:
-                self._register_dist(*parallel_setting)
+                group_results.append(parallel_setting)
+
+        return group_results
 
     def is_initialized(self, parallel_mode: ParallelMode):
         """Returns a boolean value indicating whether `parallel_mode` is initialized
