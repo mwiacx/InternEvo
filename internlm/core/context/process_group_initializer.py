@@ -259,7 +259,7 @@ def create_single_process_group(
 
 
 MTP_GROUP_ORDER = [ParallelMode.TENSOR, ParallelMode.DATA, ParallelMode.PIPELINE]
-MTP_MOE_GROUP_ORDER = [ParallelMode.EXPERT, ParallelMode.EXPERT_TENSOR, ParallelMode.EXPERT_DATA, ParallelMode.PIPELINE]
+MTP_MOE_GROUP_ORDER = [ParallelMode.EXPERT_TENSOR, ParallelMode.EXPERT, ParallelMode.EXPERT_DATA, ParallelMode.PIPELINE]
 ISP_SP_GROUP_ORDER = [ParallelMode.TENSOR, ParallelMode.DATA, ParallelMode.PIPELINE]
 ISP_WP_GROUP_ORDER = [ParallelMode.WEIGHT, ParallelMode.WEIGHT_DATA, ParallelMode.PIPELINE]
 ISP_MOE_GROUP_ORDER = [ParallelMode.EXPERT_WEIGHT, ParallelMode.EXPERT, ParallelMode.EXPERT_DATA, ParallelMode.PIPELINE]
@@ -315,7 +315,7 @@ def generate_parallel_group_configs(
     return group_configs
 
 
-def generate_2d_attn_group_configs(
+def generate_2d_attn_process_group(
     world_size: int,
     self_rank: int,
     config: Dict[str, Any],

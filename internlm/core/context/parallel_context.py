@@ -28,7 +28,7 @@ from .process_group_initializer import (
     ParallelMode,
     create_parallel_process_groups,
     create_single_process_group,
-    generate_2d_attn_group_configs,
+    generate_2d_attn_process_group,
     generate_parallel_group_configs,
 )
 from .random import add_seed, get_seeds, set_mode
@@ -693,7 +693,7 @@ class ParallelContext(metaclass=SingletonMeta):
         # process group for isp 2D attn.
         if parallel_config.sequence_2D.get("enable", False) is True:
             group_results.extend(
-                generate_2d_attn_group_configs(world_size, rank, parallel_config.sequence_2D, parallel_sizes)
+                generate_2d_attn_process_group(world_size, rank, parallel_config.sequence_2D, parallel_sizes)
             )
 
         # print(f"rank{rank}: group_results={group_results}", flush=True)
@@ -702,6 +702,8 @@ class ParallelContext(metaclass=SingletonMeta):
             try:
                 _idx = [_r[-1] for _r in group_results].index(result[-1])
             except ValueError:
+                if rank == 0:
+                    print(f"WARN: {result[-1]} not exist in new code", flush=True)
                 return
 
             new_res = group_results[_idx]
