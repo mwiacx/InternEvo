@@ -644,9 +644,9 @@ class ParallelContext(metaclass=SingletonMeta):
 
         # process groups for parallelism.
         enable_moe = self.config.model.get("num_experts", 1) > 1
-        parallel_strategy = (
-            "fsdp" if parallel_config.zero1.get("fsdp", False) else parallel_config.tensor.get("mode", "mtp")
-        )
+        tp_mode = "mtp" if isinstance(parallel_config.tensor, int) else parallel_config.tensor.get("mode", "mtp")
+        is_fsdp = False if isinstance(parallel_config.zero1, int) else parallel_config.zero1.get("fsdp", False)
+        parallel_strategy = "fsdp" if is_fsdp else tp_mode
         group_configs = generate_parallel_group_configs(parallel_strategy, parallel_sizes, enable_moe)
         group_results = create_parallel_process_groups(world_size, rank, group_configs, with_cpu_group=False)
 
