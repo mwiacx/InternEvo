@@ -11,7 +11,10 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch.distributed as dist
 
+from internlm.utils.logger import get_logger
 from internlm.utils.timeout import LLM_NCCL_TIMEOUT
+
+logger = get_logger(__file__)
 
 
 # parallel modes
@@ -84,6 +87,7 @@ class ParallelMode(Enum):
 
 
 class GroupConfig:
+    """config for initialze a process group"""
 
     def __init__(
         self,
@@ -175,10 +179,16 @@ def _create_parallel_process_groups(
             pre_group_size = pre_group_size * group.size
             continue
 
+        group_ranks, accelerator_group = None, None
         all_group_ranks = get_group_ranks(global_ranks_or_sizes, group.size, pre_group_size, group.allow_partial_group)
-        group_ranks = [_gr for _gr in all_group_ranks if self_rank in _gr][0]
 
-        accelerator_group = dist.new_group(group_ranks, timeout=LLM_NCCL_TIMEOUT)
+        for idx, ranks in enumerate(all_group_ranks):
+            _pg = dist.new_group(ranks, timeout=LLM_NCCL_TIMEOUT)
+            if self_rank in ranks:
+                group_ranks, accelerator_group = all_group_ranks[idx], _pg
+            else:
+                dist.destroy_process_group(_pg)
+
         cpu_group = init_cpu_group(accelerator_group, group_ranks, with_cpu_group)
 
         group_results.append(
@@ -327,7 +337,11 @@ def generate_2d_attn_process_group(
     assert world_size % parallel_sizes[ParallelMode.SEQUENCE] == 0
 
     if config.window_size >= 8 or config.window_size == config.context_size:
-        # TODO: warning
+        logger.warning("interleaved is forced False when window size > 8 or equals context size.")
+        config.interleaved = False
+
+    if config.device_placement_strategy.head_first and config.head_size > 1:
+        logger.warning("interleaved is forced False when head_first is True and head size > 1.")
         config.interleaved = False
 
     group_results = []

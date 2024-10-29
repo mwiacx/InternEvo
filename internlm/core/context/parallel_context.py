@@ -4,7 +4,6 @@
 # adopted from https://github.com/hpcaitech/ColossalAI/blob/main/colossalai/context
 
 import inspect
-import math
 import random
 import socket
 import sys
@@ -22,7 +21,6 @@ from internlm.utils.logger import get_logger
 from internlm.utils.timeout import LLM_NCCL_TIMEOUT
 from internlm.utils.utils import TensorParallelMode
 
-from . import process_group_initializer as pgroup_initializer
 from .process_group_initializer import (
     GroupConfig,
     ParallelMode,
@@ -629,24 +627,6 @@ class ParallelContext(metaclass=SingletonMeta):
 
         self.check_sanity()
 
-        initializer_args = [
-            rank,
-            world_size,
-            self.weight_parallel_size,
-            self.weight_data_parallel_size,
-            self.sequence_parallel_size,
-            self.data_parallel_size,
-            self.pipeline_parallel_size,
-            self.tensor_parallel_size,
-            self.zero1_parallel_size,
-            self.nettest_parallel_size,
-            self.expert_parallel_size,
-            self.expert_tensor_parallel_size,
-            self.expert_weight_parallel_size,
-            self.expert_data_parallel_size,
-            parallel_config.sequence_2D,
-        ]
-
         parallel_sizes = {
             ParallelMode.TENSOR: self.tensor_parallel_size,
             ParallelMode.SEQUENCE: self.sequence_parallel_size,
@@ -655,8 +635,8 @@ class ParallelContext(metaclass=SingletonMeta):
             ParallelMode.ZERO1: self.zero1_parallel_size,
             ParallelMode.WEIGHT: self.weight_parallel_size,
             ParallelMode.WEIGHT_DATA: self.weight_data_parallel_size,
-            ParallelMode.NETTEST: self.nettest_parallel_size,  # FIXME: impl it.
-            ParallelMode.EXPERT: self.expert_parallel_size,  # FIXME: anonymous?
+            ParallelMode.NETTEST: self.nettest_parallel_size,
+            ParallelMode.EXPERT: self.expert_parallel_size,
             ParallelMode.EXPERT_WEIGHT: self.expert_weight_parallel_size,
             ParallelMode.EXPERT_TENSOR: self.expert_tensor_parallel_size,
             ParallelMode.EXPERT_DATA: self.expert_data_parallel_size,
@@ -664,7 +644,9 @@ class ParallelContext(metaclass=SingletonMeta):
 
         # process groups for parallelism.
         enable_moe = self.config.model.get("num_experts", 1) > 1
-        parallel_strategy = "fsdp" if parallel_config.zero1.get("fsdp", False) else parallel_config.tensor.mode
+        parallel_strategy = (
+            "fsdp" if parallel_config.zero1.get("fsdp", False) else parallel_config.tensor.get("mode", "mtp")
+        )
         group_configs = generate_parallel_group_configs(parallel_strategy, parallel_sizes, enable_moe)
         group_results = create_parallel_process_groups(world_size, rank, group_configs, with_cpu_group=False)
 
@@ -696,82 +678,9 @@ class ParallelContext(metaclass=SingletonMeta):
                 generate_2d_attn_process_group(world_size, rank, parallel_config.sequence_2D, parallel_sizes)
             )
 
-        # print(f"rank{rank}: group_results={group_results}", flush=True)
-
-        def _check_helper(result) -> bool:
-            try:
-                _idx = [_r[-1] for _r in group_results].index(result[-1])
-            except ValueError:
-                if rank == 0:
-                    print(f"WARN: {result[-1]} not exist in new code", flush=True)
-                return
-
-            new_res = group_results[_idx]
-
-            for _idx in range(len(new_res)):
-                if isinstance(new_res[_idx], dist.ProcessGroup):
-                    assert (
-                        new_res[_idx].size() == result[_idx].size()
-                    ), f"rank{rank}: assert failed, mode={new_res[-1]}, {new_res[_idx]} != {result[_idx]}"
-                else:
-                    assert (
-                        new_res[_idx] == result[_idx]
-                    ), f"rank{rank}: assert failed, mode={new_res[-1]}, idx={_idx}, {new_res} != {result}"
-
-            if rank == 0:
-                print(f"{result[-1]} assert passed", flush=True)
-
-        old_group_results = self._old_process_group_allocation(parallel_config, initializer_args)
-        for res in old_group_results:
-            _check_helper(res)
-
         # register process groups
         for result in group_results:
             self._register_dist(*result)
-
-        # FIXME: remove it after unit-test.
-        exit(-1)
-
-    # FIXME: remove it after unit-test.
-    def _old_process_group_allocation(self, parallel_config, initializer_args):
-        # run initialization of different process groups
-        initializers, group_results = [], []
-
-        if "gqa" in parallel_config and parallel_config["gqa"] is True:
-            initializers.append(pgroup_initializer.Initializer_GQA(*initializer_args))
-        initializers.append(pgroup_initializer.Initializer_Weight(*initializer_args))
-        initializers.append(pgroup_initializer.Initializer_Weight_Data(*initializer_args))
-        initializers.append(pgroup_initializer.Initializer_Tensor(*initializer_args))
-        initializers.append(pgroup_initializer.Initializer_Data(*initializer_args))
-        initializers.append(pgroup_initializer.Initializer_ISP_Data(*initializer_args))  # FIXME: ???
-        if (
-            isinstance(parallel_config["tensor"], dict)
-            and parallel_config["tensor"]["mode"] == TensorParallelMode.isp.name
-        ):
-            initializers.append(pgroup_initializer.Initializer_Zero1_ISP(*initializer_args))
-        else:
-            initializers.append(pgroup_initializer.Initializer_Zero1(*initializer_args))
-        if isinstance(parallel_config["zero1"], dict) and parallel_config["zero1"].get("fsdp", False):
-            initializers.append(pgroup_initializer.Initializer_Zero3_dp(*initializer_args))
-        initializers.append(pgroup_initializer.Initializer_Nettest(*initializer_args))
-        if self.pipeline_parallel_size > 1:
-            initializers.append(pgroup_initializer.Initializer_Pipeline(*initializer_args))
-        if self.config.model.get("num_experts", 1) > 1:
-            if isinstance(parallel_config["tensor"], dict) and parallel_config["tensor"]["mode"] == "isp":
-                initializers.append(pgroup_initializer.Initializer_Expert_Weight_Data(*initializer_args))
-            else:
-                initializers.append(pgroup_initializer.Initializer_Expert_Data(*initializer_args))
-        if parallel_config.sequence_2D.get("enable", False) is True:
-            initializers.append(pgroup_initializer.Initializer_2D_SEQUENCE_PARALLEL(*initializer_args))
-
-        for initializer in initializers:
-            parallel_setting = initializer.init_dist_group()
-            if isinstance(parallel_setting, list):
-                group_results.extend(parallel_setting)
-            else:
-                group_results.append(parallel_setting)
-
-        return group_results
 
     def is_initialized(self, parallel_mode: ParallelMode):
         """Returns a boolean value indicating whether `parallel_mode` is initialized
