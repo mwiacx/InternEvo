@@ -189,6 +189,10 @@ def _create_parallel_process_groups(
             else:
                 dist.destroy_process_group(_pg)
 
+        if group_ranks is None:
+            pre_group_size = pre_group_size * group.size
+            continue
+
         cpu_group = init_cpu_group(accelerator_group, group_ranks, with_cpu_group)
 
         group_results.append(
@@ -372,42 +376,47 @@ def generate_2d_attn_process_group(
 
     # window process groups.
     window_num = config.context_size // config.window_size
-    context_ranks = group_results[context_results_index][-2]  # ranks_in_group index: -2
+    cp_pre_group_size = 1 if context_results_index == 0 else config.head_size
+    every_context_ranks = get_group_ranks(world_size, config.context_size, cp_pre_group_size)
 
-    if not config.device_placement_strategy.interleaved:
-        window_ranks = context_ranks
-    else:
-        _indexes = [
-            j * 2 + i * config.window_size if i % 2 == 0 else j * 2 + 1 + (i - 1) * config.window_size
-            for i in range(window_num)
-            for j in range(config.window_size)
-        ]
-        window_ranks = [context_ranks[_i] for _i in _indexes]
+    def _gen_window_process_groups(context_ranks: List[int]):
+        if not config.device_placement_strategy.interleaved:
+            window_ranks = context_ranks
+        else:
+            _indexes = [
+                j * 2 + i * config.window_size if i % 2 == 0 else j * 2 + 1 + (i - 1) * config.window_size
+                for i in range(window_num)
+                for j in range(config.window_size)
+            ]
+            window_ranks = [context_ranks[_i] for _i in _indexes]
 
-    group_results.extend(
-        _create_parallel_process_groups(
-            window_ranks,
-            self_rank,
-            1,
-            [
-                GroupConfig(ParallelMode.INTRA_WINDOW, config.window_size),
-                GroupConfig(ParallelMode.INTER_WINDOW, window_num),
-            ],
-            with_cpu_group,
+        group_results.extend(
+            _create_parallel_process_groups(
+                window_ranks,
+                self_rank,
+                1,
+                [
+                    GroupConfig(ParallelMode.INTRA_WINDOW, config.window_size),
+                    GroupConfig(ParallelMode.INTER_WINDOW, window_num),
+                ],
+                with_cpu_group,
+            )
         )
-    )
-    group_results.extend(
-        _create_parallel_process_groups(
-            window_ranks,
-            self_rank,
-            1,
-            [
-                GroupConfig(ParallelMode.DKV_INTRA_WINDOW, config.window_size),
-                GroupConfig(ParallelMode.DKV_INTER_WINDOW, window_num),
-            ],
-            with_cpu_group,
+        group_results.extend(
+            _create_parallel_process_groups(
+                window_ranks,
+                self_rank,
+                1,
+                [
+                    GroupConfig(ParallelMode.DKV_INTRA_WINDOW, config.window_size),
+                    GroupConfig(ParallelMode.DKV_INTER_WINDOW, window_num),
+                ],
+                with_cpu_group,
+            )
         )
-    )
+
+    for context_ranks in every_context_ranks:
+        _gen_window_process_groups(context_ranks)
 
     # print(get_group_ranks(window_ranks, config.window_size, 1))
     # print(get_group_ranks(window_ranks, window_num, config.window_size))
