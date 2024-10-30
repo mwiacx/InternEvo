@@ -133,6 +133,7 @@ def get_streaming_train_loader_items(data_cfg):
         train_folder=data_cfg.train_folder,
         tokenizer_path=data_cfg.tokenizer_path,
         model_max_length=data_cfg.seq_len,
+        image_folder=data_cfg.get("image_folder", None),
         content_name=data_cfg.get("content_name", "text"),
         subset_name=data_cfg.get("subset_name", None),
     )

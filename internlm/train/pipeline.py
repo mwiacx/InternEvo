@@ -52,6 +52,9 @@ from internlm.model.metrics import SchedulerMetricHook
 from internlm.model.modules.embedding import Embedding1D
 from internlm.model.modules.linear import (
     ColumnParallelLinear,
+    GroupedColumnLinear,
+    GroupedRowLinear,
+    GroupedWPLinear,
     ParallelLinearWithCommExt,
     RewardModelLinear,
     RowParallelLinear,
@@ -114,6 +117,42 @@ logger = get_logger(__file__)
 internlm_accelerator = get_accelerator()
 
 
+def set_param_unique_tracking_name(model):
+    for chunk_id, chunk in enumerate(unwrap_naive_amp(model)):
+        # Important: only works for llama-class models
+        childrens = chunk.named_children()
+        for _, children in childrens:
+            if isinstance(children, nn.ModuleList):
+                for idx, block in enumerate(children):
+                    for name, child in block.named_modules():
+                        if isinstance(child, (ParallelLinearWithCommExt)):
+                            full_name = f"{chunk_id}.{idx}.{name}"
+                            setattr(
+                                child.weight,
+                                "tracking_name",
+                                f"{full_name}.weight",
+                            )
+                            if child.bias is not None:
+                                setattr(
+                                    child.bias,
+                                    "tracking_name",
+                                    f"{full_name}.bias",
+                                )
+            else:
+                if isinstance(children, Embedding1D):
+                    setattr(
+                        children.weight,
+                        "tracking_name",
+                        f"{chunk_id}_embedding.weight",
+                    )
+                else:
+                    setattr(
+                        children.weight,
+                        "tracking_name",
+                        f"{chunk_id}_head.weight",
+                    )
+
+
 def set_fp32_attr_for_model(model: Union[nn.Module, nn.ModuleList]):
     if not isinstance(model, nn.ModuleList):
         model = [model]
@@ -151,6 +190,10 @@ def set_parallel_attr_for_param_groups(model: Union[nn.Module, nn.ModuleList]):
                     setattr(param, IS_TENSOR_ZERO_PARALLEL, True)
 
         # for moe linear module
+        if isinstance(module, nn.Linear) and not isinstance(module, ParallelLinearWithCommExt):
+            for param in module.parameters():
+                setattr(param, IS_REPLICA_ZERO_PARALLEL, True)
+
         if isinstance(module, Experts):
             for param in module.parameters():
                 if (
@@ -178,7 +221,7 @@ def set_parallel_attr_for_param_groups(model: Union[nn.Module, nn.ModuleList]):
 
     for _chunk in unwrap_naive_amp(model):
         # special case for pure dp or pure wdp mode
-        if gpc.get_world_size(ParallelMode.DATA) == gpc.get_world_size(ParallelMode.GLOBAL) or gpc.get_world_size(
+        if gpc.get_world_size(ParallelMode.DATA) == gpc.get_world_size(ParallelMode.GLOBAL) and gpc.get_world_size(
             ParallelMode.WEIGHT_DATA
         ) == gpc.get_world_size(ParallelMode.GLOBAL):
             _check_module_func = _check_module_pure_dp_wdp
@@ -345,7 +388,7 @@ def initialize_parallel_communicator(model: Union[nn.Module, nn.ModuleList]):
                 is_moe=True,
             )
             for moe in _submodule_filter(model, Experts):
-                for column_linear in _submodule_filter(moe, (ColumnParallelLinear)):
+                for column_linear in _submodule_filter(moe, (ColumnParallelLinear, GroupedWPLinear)):
                     column_linear.register_communicator(moe_isp_communicator)
                 for row_linear in _submodule_filter(moe, RowParallelLinear):
                     row_linear.register_communicator(None)
@@ -365,21 +408,30 @@ def initialize_parallel_communicator(model: Union[nn.Module, nn.ModuleList]):
             TensorParallelCommunicator(process_group=gpc.get_group(ParallelMode.TENSOR), role=LinearRole.ROW)
         )
 
-        if gpc.config.model.get("num_experts", 1) > 1 and gpc.config.parallel.expert.no_tp:
-            _column_communicator = TensorParallelCommunicator(
-                process_group=gpc.get_group(ParallelMode.EXPERT_TENSOR), role=LinearRole.COLUMN
+        if gpc.config.model.get("num_experts", 1) > 1:
+            GroupedColumnLinear.register_cls_communicator(
+                TensorParallelCommunicator(process_group=gpc.get_group(ParallelMode.TENSOR), role=LinearRole.COLUMN)
             )
-            _row_communicator = TensorParallelCommunicator(
-                process_group=gpc.get_group(ParallelMode.EXPERT_TENSOR), role=LinearRole.ROW
+            GroupedRowLinear.register_cls_communicator(
+                TensorParallelCommunicator(process_group=gpc.get_group(ParallelMode.TENSOR), role=LinearRole.ROW)
             )
-            for moe in _submodule_filter(model, MoE):
-                # 1. the linear in MoE degrades as no tp communication pattern
-                for column_linear in _submodule_filter(moe, ColumnParallelLinear):
-                    column_linear.register_communicator(_column_communicator)
-                for row_linear in _submodule_filter(moe, RowParallelLinear):
-                    row_linear.register_communicator(_row_communicator)
-                # 2. register MoESequenceParallelCommunicator for MoE layer
-                MoESequenceParallelCommunicator(ParallelMode.TENSOR, reverse=True).register_module_hook(moe)
+            GroupedWPLinear.register_cls_communicator(None)
+            # treat as sequence paralle if no_tp
+            if gpc.config.parallel.expert.no_tp:
+                _column_communicator = TensorParallelCommunicator(
+                    process_group=gpc.get_group(ParallelMode.EXPERT_TENSOR), role=LinearRole.COLUMN
+                )
+                _row_communicator = TensorParallelCommunicator(
+                    process_group=gpc.get_group(ParallelMode.EXPERT_TENSOR), role=LinearRole.ROW
+                )
+                for moe in _submodule_filter(model, MoE):
+                    # 1. the linear in MoE degrades as no tp communication pattern
+                    for column_linear in _submodule_filter(moe, ColumnParallelLinear):
+                        column_linear.register_communicator(_column_communicator)
+                    for row_linear in _submodule_filter(moe, RowParallelLinear):
+                        row_linear.register_communicator(_row_communicator)
+                    # 2. register MoESequenceParallelCommunicator for MoE layer
+                    MoESequenceParallelCommunicator(ParallelMode.TENSOR, reverse=True).register_module_hook(moe)
 
         _head_communicator = HeadTensorParallelCommunicator(ParallelMode.TENSOR, _retain_out_sharded)
         _embedding_communicator = EmbeddingTensorParallelCommunicator(ParallelMode.TENSOR)
@@ -401,19 +453,35 @@ def initialize_parallel_communicator(model: Union[nn.Module, nn.ModuleList]):
                 save_total_input_as_activation=save_total_input_as_activation,
             )
         )
-        if gpc.config.model.get("num_experts", 1) > 1 and gpc.config.parallel.expert.no_tp:
-            _column_communicator = TensorParallelCommunicator(
-                process_group=gpc.get_group(ParallelMode.EXPERT_TENSOR), role=LinearRole.COLUMN
+        if gpc.config.model.get("num_experts", 1) > 1:
+            GroupedColumnLinear.register_cls_communicator(
+                SequenceParallelCommunicator(
+                    process_group=gpc.get_group(ParallelMode.TENSOR),
+                    role=LinearRole.COLUMN,
+                    save_total_input_as_activation=save_total_input_as_activation,
+                )
             )
-            _row_communicator = TensorParallelCommunicator(
-                process_group=gpc.get_group(ParallelMode.EXPERT_TENSOR), role=LinearRole.ROW
+            GroupedRowLinear.register_cls_communicator(
+                SequenceParallelCommunicator(
+                    gpc.get_group(ParallelMode.TENSOR),
+                    role=LinearRole.ROW,
+                    save_total_input_as_activation=save_total_input_as_activation,
+                )
             )
-            for moe in _submodule_filter(model, MoE):
-                # 1. the linear in MoE degrades as no tp communication pattern
-                for column_linear in _submodule_filter(moe, ColumnParallelLinear):
-                    column_linear.register_communicator(_column_communicator)
-                for row_linear in _submodule_filter(moe, RowParallelLinear):
-                    row_linear.register_communicator(_row_communicator)
+            GroupedWPLinear.register_cls_communicator(None)
+            if gpc.config.parallel.expert.no_tp:
+                _column_communicator = TensorParallelCommunicator(
+                    process_group=gpc.get_group(ParallelMode.EXPERT_TENSOR), role=LinearRole.COLUMN
+                )
+                _row_communicator = TensorParallelCommunicator(
+                    process_group=gpc.get_group(ParallelMode.EXPERT_TENSOR), role=LinearRole.ROW
+                )
+                for moe in _submodule_filter(model, MoE):
+                    # 1. the linear in MoE degrades as no tp communication pattern
+                    for column_linear in _submodule_filter(moe, ColumnParallelLinear):
+                        column_linear.register_communicator(_column_communicator)
+                    for row_linear in _submodule_filter(moe, RowParallelLinear):
+                        row_linear.register_communicator(_row_communicator)
 
         _head_communicator = HeadSequenceParallelCommunicator(
             ParallelMode.TENSOR, _retain_out_sharded, save_total_input_as_activation
@@ -927,7 +995,7 @@ def inject_model_helper(model: Union[nn.Module, nn.ModuleList], inject_info: Opt
 
     # inject modules
     for _chunk in model:
-        if gpc.get_world_size(ParallelMode.DATA) == gpc.get_world_size(ParallelMode.GLOBAL) or gpc.get_world_size(
+        if gpc.get_world_size(ParallelMode.DATA) == gpc.get_world_size(ParallelMode.GLOBAL) and gpc.get_world_size(
             ParallelMode.WEIGHT_DATA
         ) == gpc.get_world_size(ParallelMode.GLOBAL):
             continue
