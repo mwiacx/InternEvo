@@ -303,11 +303,16 @@ def generate_parallel_group_configs(
         config = []
 
         for mode in order:
+            # disable pp process group for compatibility when pp size is 1.
+            anonymous = mode is ParallelMode.PIPELINE and parallel_sizes[mode] == 1
+
             if mode not in subgroup_spec:
-                config.append(GroupConfig(mode, parallel_sizes[mode]))
+                config.append(GroupConfig(mode, parallel_sizes[mode], anonymous))
             else:
                 config.append(
-                    GroupConfig(mode, parallel_sizes[mode], subgroups=_recurse_generater(subgroup_spec[mode]))
+                    GroupConfig(
+                        mode, parallel_sizes[mode], anonymous, subgroups=_recurse_generater(subgroup_spec[mode])
+                    )
                 )
 
         return config
