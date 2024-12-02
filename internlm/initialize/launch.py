@@ -450,11 +450,19 @@ def args_sanity_check():
         gpc.config.parallel["weight"]["overlap"] = False
     if gpc.config.parallel["tensor"]["mode"] != TensorParallelMode.isp.name:
         assert gpc.config.parallel["weight"]["size"] <= 1, "weight parallel is only supported with isp"
+
+    if "early_reduce_scatter_release" not in gpc.config.parallel.weight:
+        gpc.config.parallel.weight["early_reduce_scatter_release"] = True
+
     # set default value for expert_weight parallel
     if gpc.config.parallel["expert_weight"].get("overlap", None) is None:
         gpc.config.parallel["expert_weight"]["overlap"] = False
     if gpc.config.parallel["expert"].get("no_tp", None) is None:
         gpc.config.parallel["expert"]["no_tp"] = False
+
+    if "early_reduce_scatter_release" not in gpc.config.parallel.expert_weight:
+        gpc.config.parallel.expert_weight["early_reduce_scatter_release"] = True
+
     # currently only interleaved pipeline scheduler with overlap can guarantee loss accuracy
     if hasattr(gpc.config.model, "num_chunks") and gpc.config.model.num_chunks > 1:
         assert (
