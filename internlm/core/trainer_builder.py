@@ -306,7 +306,7 @@ class TrainerBuilder(Trainer):
 
     def _forward_backward(self, batch):
         self.zero_grad()
-        if hasattr(gpc.config.model, "num_experts"):
+        if hasattr(gpc.config.model, "num_experts") and gpc.config.model.num_experts > 1:
             _, _, loss, moe_loss = self.execute_schedule(
                 batch, forward_only=False, return_loss=True, return_output_label=False
             )
