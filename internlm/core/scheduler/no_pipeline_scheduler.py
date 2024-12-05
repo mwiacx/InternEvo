@@ -230,7 +230,7 @@ class NonPipelineScheduler(BaseScheduler):
             outputs, labels = None, None
 
         # Compatible for non-moe
-        if hasattr(gpc.config.model, "num_experts") and gpc.config.model.num_experts > 1:
+        if hasattr(gpc.config.model, "num_experts"):
             return outputs, labels, loss, moe_loss
         else:
             return outputs, labels, loss

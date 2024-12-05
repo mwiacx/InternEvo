@@ -289,7 +289,7 @@ class PipelineScheduler(BaseScheduler):
         data, label = self._get_data_label_for_current_step(input_obj, micro_batch_data)
 
         self._call_hooks("before_forward", data)
-        if hasattr(gpc.config.model, "num_experts") and gpc.config.model.num_experts > 1:
+        if hasattr(gpc.config.model, "num_experts"):
             # moe is used
             output_obj, moe_losses = self._call_engine(engine.model, data)
         else:
@@ -708,7 +708,7 @@ class PipelineScheduler(BaseScheduler):
             )
 
         # Compatible for non-moe
-        if hasattr(gpc.config.model, "num_experts") and gpc.config.model.num_experts > 1:
+        if hasattr(gpc.config.model, "num_experts"):
             return output, label, accum_loss, accum_moe_loss
         else:
             return output, label, accum_loss
@@ -870,7 +870,7 @@ class InterleavedPipelineScheduler(PipelineScheduler):
         data, label = self._get_data_label_for_current_step(input_obj, micro_batch_data)
 
         self._call_hooks("before_forward", data)
-        if hasattr(gpc.config.model, "num_experts") and gpc.config.model.num_experts > 1:
+        if hasattr(gpc.config.model, "num_experts"):
             output_obj, moe_losses = self._call_engine(engine.model[chunk_id], data)
         else:
             output_obj = self._call_engine(engine.model[chunk_id], data)
@@ -1434,6 +1434,7 @@ class InterleavedPipelineScheduler(PipelineScheduler):
             output, label = (None, None)
 
         accum_loss = self._accum_loss
+        accum_moe_loss = self._accum_moe_loss
 
         if hasattr(gpc.config.model, "num_experts") and gpc.config.model.num_experts > 1:
             dist.all_reduce(self._accum_moe_loss, group=gpc.get_group(ParallelMode.PIPELINE))
@@ -1445,7 +1446,7 @@ class InterleavedPipelineScheduler(PipelineScheduler):
         self._clear_state()
 
         # Compatible for non-moe
-        if hasattr(gpc.config.model, "num_experts") and gpc.config.model.num_experts > 1:
+        if hasattr(gpc.config.model, "num_experts"):
             return output, label, accum_loss, accum_moe_loss
         else:
             return output, label, accum_loss
