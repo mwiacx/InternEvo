@@ -45,7 +45,7 @@ def _get_tensor_shape(tensor_shape: TensorShape, chunk_tensor: bool = False) -> 
 
 
 def _p2p_func(_comm_op, _obj, _comm_rank):
-    if gpc.config.parallel.pipeline.batch_p2p_comm is True:
+    if getattr(gpc.config.parallel.pipeline, "batch_p2p_comm", False) is True:
         op_or_handle = dist.P2POp(_comm_op, _obj, _comm_rank)
     else:
         op_or_handle = _comm_op(_obj, _comm_rank)
@@ -190,7 +190,7 @@ def _communicate(
             filling_ops_queue(object_send_prev, dist.isend, prev_rank, ops)
 
     if len(ops) > 0:
-        if gpc.config.parallel.pipeline.batch_p2p_comm is True:
+        if getattr(gpc.config.parallel.pipeline, "batch_p2p_comm", False) is True:
             reqs = dist.batch_isend_irecv(ops)
             for req in reqs:
                 req.wait()
@@ -317,14 +317,14 @@ def _communicate_async(
         if object_send_prev is not None:
             filling_ops_queue(object_send_prev, dist.isend, prev_rank, ops)
 
-    if len(ops) > 0 and gpc.config.parallel.pipeline.batch_p2p_comm is True:
+    if len(ops) > 0 and getattr(gpc.config.parallel.pipeline, "batch_p2p_comm", False) is True:
         reqs = dist.batch_isend_irecv(ops)
 
     # return and do other things
     yield
 
     if len(ops) > 0:
-        if gpc.config.parallel.pipeline.batch_p2p_comm is True:
+        if getattr(gpc.config.parallel.pipeline, "batch_p2p_comm", False) is True:
             for req in reqs:
                 req.wait()
             # To protect against race condition when using batch_isend_irecv().
