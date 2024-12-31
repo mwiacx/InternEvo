@@ -329,7 +329,7 @@ class ISPCommunicationContext(ABC):
     ) -> torch.Tensor:
         """
         all gather proxy.
-        TODO: 接口不应该存在is_bias参数, 暂时为之。
+        TODO: The interface should not have an is_bias parameter, but it is temporarily there.
         """
 
     @abstractmethod
@@ -381,7 +381,7 @@ class ReduceScatterOperation:
     reduce_op: dist.ReduceOp
 
 
-# 借鉴了FSDP2的实现
+# Leveraged the implementation of FSDP2
 # https://github.com/pytorch/pytorch/issues/114299
 class LayerAsyncCommContext(ISPCommunicationContext):
     """
@@ -414,13 +414,12 @@ class LayerAsyncCommContext(ISPCommunicationContext):
     def switch_current_overlap_state(self, overlap_state: ISPOverlapState) -> None:
         self._overlap_state = overlap_state
 
-    # 潜在的embedding and head layer 通信的处理。
+    # Possible future support for communication between embedding and head layers.
     # def parse_model_structure(
     #     self, chunk_id: int, state: ISPOverlapState, model: nn.Module, is_moe: bool = False
     # ) -> None:
-    #     """重写部分LayerAsyncCommContext需要的数据结构"""
+    #     """Rewrite the data structures needed for some LayerAsyncCommContext."""
 
-    #     # 重置LayerAsyncCommContext需要的数据结构
     #     state.index_to_block = {}
     #     state.index_to_isp_modules = {}
     #     state.module_to_index = {}
@@ -470,26 +469,26 @@ class LayerAsyncCommContext(ISPCommunicationContext):
             self._allgather_result = None
             self._reduce_scatter_ops = []
 
-        # 为第一个layer预取参数
+        # Pre-fetch parameters for the first layer.
         num_blocks = self._overlap_state.num_blocks
 
         first_block = self._overlap_state.index_to_block[0]
         last_block = self._overlap_state.index_to_block[num_blocks - 1]
 
-        # 拉取forward阶段第一个layer的参数
+        # Pull parameters for the first layer during the forward phase.
         first_block.register_forward_pre_hook(partial(self._pre_forward_for_block, -1))
-        # 拉取backward阶段第一个layer的参数
+        # Pull parameters for the first layer during the backward phase.
         last_block.register_full_backward_pre_hook(partial(self._pre_backward_for_block, num_blocks))
 
         for _block_idx in range(num_blocks):
             _block = self._overlap_state.index_to_block[_block_idx]
-            # 为下一个layer预取参数
+            # Pre-fetch parameters for the next layer.
             _block.register_forward_pre_hook(self._pre_forward_for_block)
             _block.register_full_backward_pre_hook(self._pre_backward_for_block)
-            # 清理已经使用过的权重
+            # Clean up the parameters that have been used.
             _block.register_forward_hook(_clear_all_gather_buffer)
             _block.register_full_backward_hook(_clear_all_gather_buffer)
-            # reduce scatter梯度
+            # Reduce scatter gradients
             _block.register_full_backward_hook(self._post_backward_for_block)
 
         last_block.register_forward_hook(_clear_all_gather_result)
@@ -500,7 +499,6 @@ class LayerAsyncCommContext(ISPCommunicationContext):
     ) -> torch.Tensor:
         """
         all gather proxy.
-        TODO: 接口不应该存在is_bias参数, 暂时为之。
         """
 
         already_gathered = (
@@ -542,7 +540,8 @@ class LayerAsyncCommContext(ISPCommunicationContext):
         return result, handle
 
     def pop_reduced_grad(self, key: str) -> torch.Tensor:
-        # 这里注意不能直接pop，由于_WaitOrCommitHandle可能触发commit，更新对应的reduce scatter result.
+        # Be cautious here not to directly pop, as _WaitOrCommitHandle might trigger a commit,
+        # update the corresponding reduce scatter result.
         rs_result = self._reduce_scatter_results[key]
         rs_result.handle.wait()
 
@@ -556,7 +555,7 @@ class LayerAsyncCommContext(ISPCommunicationContext):
 
         return _check_reduce_ops.pop()
 
-    # 从fsdp2中copy而来
+    # Copied from FSDP2.
     def _all_gather_copy_in(
         self,
         all_gather_inputs: List[torch.Tensor],
@@ -576,7 +575,7 @@ class LayerAsyncCommContext(ISPCommunicationContext):
 
         return all_gather_input, all_gather_output
 
-    # 从fsdp2中copy而来
+    # Copied from FSDP2.
     def _split_with_sizes_copy(
         self,
         all_gather_output: torch.Tensor,
@@ -587,7 +586,6 @@ class LayerAsyncCommContext(ISPCommunicationContext):
         torch.split_with_sizes_copy(all_gather_output, all_gather_input_split_sizes, dim=dim, out=out)
 
     def _all_gather_block_params(self, block_idx):
-        # 聚合需要通信的参数
         all_gather_inputs = []
 
         for module in self._overlap_state.index_to_isp_modules[block_idx]:
@@ -658,11 +656,11 @@ class LayerAsyncCommContext(ISPCommunicationContext):
 
         self._allgather_copy_in_stream.wait_stream(internlm_accelerator.current_stream())
 
-        # 检查本层参数通信是否完成，并解包通信的结果
+        # Check if the communication for this layer's parameters is complete and unpack the communication results.
         if self._allgather_result is not None:
             self._wait_and_copy_out_params(block_index)
 
-        # 预取“下一层”的参数
+        # Pre-fetch parameters for the "next layer".
         if self._is_forward and block_index + 1 < self._overlap_state.num_blocks:
             # start the all-gather for next block
             next_all_gather_result = self._all_gather_block_params(block_index + 1)
@@ -680,11 +678,11 @@ class LayerAsyncCommContext(ISPCommunicationContext):
 
         self._allgather_copy_in_stream.wait_stream(internlm_accelerator.current_stream())
 
-        # 检查本层参数通信是否完成，并解包通信的结果
+        # Check if the communication for this layer's parameters is complete and unpack the communication results.
         if self._allgather_result is not None:
             self._wait_and_copy_out_params(block_index)
 
-        # 预取“下一层”的参数
+        # Pre-fetch parameters for the "next layer".
         if block_index - 1 >= 0:
             next_all_gather_result = self._all_gather_block_params(block_index - 1)
         else:
@@ -701,7 +699,7 @@ class LayerAsyncCommContext(ISPCommunicationContext):
             internlm_accelerator.current_stream().wait_event(self._reduce_scatter_state[1])
             self._reduce_scatter_state = None
 
-        # 聚合 reduce scatter 的参数
+        # Aggregate parameters for reduce scatter.
         world_size = dist.get_world_size(self.process_group)
 
         reduce_ops = [_i.reduce_op for _i in self._reduce_scatter_ops]
@@ -711,7 +709,7 @@ class LayerAsyncCommContext(ISPCommunicationContext):
         unshard_grad_sizes = [_grad.size() for _grad in unshard_grads]
         reduce_scatter_input_numel = sum(s.numel() for s in unshard_grad_sizes)
 
-        # 等待计算stream
+        # wait for compute stream
         self._reduce_scatter_comm_stream.wait_stream(internlm_accelerator.current_stream())
 
         with internlm_accelerator.stream(self._reduce_scatter_comm_stream):
@@ -722,7 +720,7 @@ class LayerAsyncCommContext(ISPCommunicationContext):
 
             reduce_output, _ = reduce_scatter_raw(reduce_scatter_input, self.process_group, reduce_op)
 
-            # 解析通信结果
+            # unack reduce scatter result
             flat_grad_offset = 0
 
             for _idx, _unshard_size in enumerate(unshard_grad_sizes):
