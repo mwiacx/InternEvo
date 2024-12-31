@@ -13,7 +13,7 @@ from internlm.core.context import global_context as gpc
 from internlm.core.trainer import Trainer, TrainState
 from internlm.data import build_train_loader_with_data_type
 from internlm.initialize import initialize_distributed_env
-from internlm.model.losses import FlashGPTLMLoss
+from internlm.model.losses import InternLoss
 from internlm.train import (
     get_scheduler_hooks,
     initialize_model,
@@ -109,7 +109,7 @@ def train(
         config.hybrid_zero_optimizer.overlap_sync_grad = False
 
     config.parallel.pipeline = dict(size=pp_size, mode=pp_mode)
-    config.parallel.weight = dict(size=wp_size, overlap=True)
+    config.parallel.weight = dict(size=wp_size, overlap=True, launch_allgather_before="wo", forward_overlap_per="layer")
     if interleaved is True:
         config.parallel.pipeline = dict(size=pp_size, interleaved_overlap=True, mode=pp_mode)
         config.model.num_chunks = num_chunks
@@ -174,7 +174,7 @@ def train(
     isp_communicator = initialize_parallel_communicator(model)
 
     # initialize loss function
-    criterion = FlashGPTLMLoss(parallel_output=gpc.config.model.parallel_output, label_smoothing=label_smoothing)
+    criterion = InternLoss(parallel_output=gpc.config.model.parallel_output, label_smoothing=label_smoothing)
 
     # initialize the train data loader
     train_dl, _ = build_train_loader_with_data_type()
