@@ -15,14 +15,14 @@ class AsyncCommHandle(ABC):
     """A interface for asynchronous communication handles."""
 
     @abstractmethod
-    def wait(self) -> None:
+    def wait(self, stream=None) -> None:
         """wait asynchronous communication to complete."""
 
 
 class DummyAsyncCommHandle(AsyncCommHandle):
     """A fake communication handle used to maintain consistency in code writing"""
 
-    def wait(self) -> None:
+    def wait(self, stream=None) -> None:
         pass
 
 
