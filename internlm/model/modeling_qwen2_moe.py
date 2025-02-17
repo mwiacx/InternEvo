@@ -520,7 +520,7 @@ class Qwen2Moe(BaseModel):
     def forward(self, hidden_states=None, input_ids=None, **kwargs):
         # attention_mask: compute attention on the places where the value is 1
         # old condition may fail when use shared embedding
-        if gpc.is_pipeline_first_stage() and input_ids is not None:
+        if hasattr(self, "embed_tokens") and input_ids is not None:
             hidden_states = self.embed_tokens(input_ids)
             if self.embed_grad_scale != 1:
                 hidden_states = (

@@ -146,8 +146,9 @@ class SPFusedDenseFunc(torch.autograd.Function):
                     and not gpc.is_first_rank(ParallelMode.PIPELINE)
                 )
                 or gpc.config.parallel["pipeline"].get("mode", "1F1B") == "ZBV"
+                or gpc.config.parallel["pipeline"].get("mode", "1F1B") == "DUALPIPE"
             ):
-                from internlm.core.scheduler.pipeline_scheduler_zb import (
+                from internlm.core.scheduler.pipeline_scheduler_dualpipe import (
                     WeightGradStore,
                 )
 
@@ -253,6 +254,7 @@ class WPFusedDenseFunc(torch.autograd.Function):
                 and not gpc.is_first_rank(ParallelMode.PIPELINE)
             )
             or gpc.config.parallel["pipeline"].get("mode", "1F1B") == "ZBV"
+            or gpc.config.parallel["pipeline"].get("mode", "1F1B") == "DUALPIPE"
         )
 
         # compute weight grad
@@ -260,7 +262,7 @@ class WPFusedDenseFunc(torch.autograd.Function):
             assert ctx.compute_weight_gradient
             x = x.reshape(batch_dim, x.shape[-1])
             if is_using_ZB:
-                from internlm.core.scheduler.pipeline_scheduler_zb import (
+                from internlm.core.scheduler.pipeline_scheduler_dualpipe import (
                     WeightGradStore,
                 )
 

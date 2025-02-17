@@ -30,7 +30,7 @@ def Gelu(w1_o, w2_o):
     return F.gelu(w1_o) * w2_o
 
 
-Silu = torch.jit.script(Silu)
+# Silu = torch.jit.script(Silu)
 Gelu = torch.jit.script(Gelu)
 
 

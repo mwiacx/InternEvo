@@ -17,6 +17,7 @@ from internlm.core.engine import Engine
 from internlm.core.gradient_handler import PipelineSharedModuleGradientHandler
 from internlm.core.parallel.shard import split_data_for_sequence_parallel
 from internlm.core.scheduler import (
+    DualPipelineScheduler,
     InterleavedPipelineScheduler,
     NonPipelineScheduler,
     PipelineScheduler,
@@ -26,6 +27,7 @@ from internlm.core.scheduler import (
 from internlm.core.scheduler.pipeline_scheduler_1f1b import get_tensor_shape
 from internlm.core.trainer import Trainer
 from internlm.data.utils import packed_data_normalizer, unpack_data
+from internlm.model.moe.moe import register_moe_graph_cutter
 from internlm.solver.optimizer.hybrid_zero_optim import BaseOptimizer
 from internlm.solver.schedulers.beta2_scheduler import Beta2Scheduler
 from internlm.utils.common import SchedulerHook, get_current_device
@@ -142,6 +144,27 @@ def initialize_trainer(
                 scatter_gather_tensors=scatter_gather,
                 scheduler_hooks=scheduler_hooks,
                 optimizer=optimizer,
+            )
+        elif pp_mode == "DUALPIPE":
+            from internlm.model.moe.utils import SchedAndA2APoint
+
+            scheduler = DualPipelineScheduler(
+                num_microbatches=gpc.config.NUM_MICRO_BATCHES,
+                dtype=gpc.config.model["dtype"],
+                data_process_func=_data_preparation_func,
+                tensor_shape=tensor_shape,
+                scatter_gather_tensors=scatter_gather,
+                scheduler_hooks=scheduler_hooks,
+                communication_overlap=True,
+                optimizer=optimizer,
+            )
+
+            if gpc.config.model.get("num_experts", 1) > 1:
+                register_moe_graph_cutter(gpc.config.model.get("moe_type", "GShard"), scheduler._cut_compute_graph)
+
+            SchedAndA2APoint.register_interrupt_handlers(
+                excutor=scheduler._inpterrupt_forward_excute_backward,
+                handler=scheduler._save_comm_handler,
             )
         else:
             scheduler = PipelineScheduler(

@@ -1,8 +1,8 @@
 JOB_NAME = "1.8b_moe_train"
 DO_ALERT = False
 
-SEQ_LEN = 2048
-HIDDEN_SIZE = 1024
+SEQ_LEN = 16 * 1024
+HIDDEN_SIZE = 2048
 NUM_ATTENTION_HEAD = 16
 MLP_RATIO = 1.5
 NUM_LAYER = 24
@@ -51,15 +51,15 @@ VALID_FOLDER = None  # "/path/to/dataset"
 data = dict(
     seq_len=SEQ_LEN,
     # micro_num means the number of micro_batch contained in one gradient update
-    micro_num=4,
+    micro_num=20,
     # packed_length = micro_bsz * SEQ_LEN
-    micro_bsz=2,
+    micro_bsz=1,
     # defaults to the value of micro_num
     valid_micro_num=4,
     # defaults to 0, means disable evaluate
     valid_every=5000,
     pack_sample_into_one=False,
-    total_steps=5000,
+    total_steps=20000,
     skip_batches="",
     # rampup_batch_size (str): A string with three space-separated integers representing the
     #       starting batch size, the increment, and the number of steps between
@@ -160,7 +160,7 @@ model = dict(
     num_chunks=1,  # if num_chunks > 1, interleaved pipeline scheduler is used.
     num_experts=16,
     moe_use_residual=False,
-    moe_type="GShard",  # Support: "GShard", "MegaBlock", "MegaBlock-Dropless", "Dropless"
+    moe_type="Dropless",  # Support: "GShard", "MegaBlock", "MegaBlock-Dropless", "Dropless"
 )
 """
 zero1 parallel (dict):
@@ -199,7 +199,7 @@ expert weight parallel (dict):
 parallel = dict(
     zero1=dict(size=-1, fsdp=False),
     tensor=dict(size=1, mode="mtp"),
-    pipeline=dict(size=1, interleaved_overlap=True),
+    pipeline=dict(size=8, interleaved_overlap=True, mode="dualpipe", batch_p2p_comm=False),
     weight=dict(size=1, overlap=True),
     expert=dict(size=-1, no_tp=False),
     expert_weight=dict(size=1, overlap=True),

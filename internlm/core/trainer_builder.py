@@ -267,6 +267,7 @@ class TrainerBuilder(Trainer):
 
         with initialize_llm_profile(profiling=self.profiling, start_time=self.current_time) as prof:
             gc.disable()
+            gpc.prof = prof
             for batch_count in range(self.train_state.batch_count, gpc.config.data.total_steps):
                 if self._process_batch(batch_count, train_iter, prof):
                     break
@@ -389,5 +390,5 @@ class TrainerBuilder(Trainer):
     def _update_profilers(self, batch_count: int, prof):
         if self.memory_profiler is not None:
             self.memory_profiler.step()
-        if batch_count % 2 == 0:
+        if batch_count % 1 == 0:
             prof.step()

@@ -298,7 +298,7 @@ class HybridZeroOptimizer(BaseOptimizer):
 
     # TODO check expert dp is correct when enable moe and overlap both
     def _attach_reduction_hook(self):
-        from internlm.core.scheduler.pipeline_scheduler_zb import WeightGradStore
+        from internlm.core.scheduler.pipeline_scheduler_dualpipe import WeightGradStore
 
         is_using_ZB = gpc.config.parallel["pipeline"].get("mode", "1F1B") != "1F1B"
         # we iterate over the fp16 params
@@ -415,7 +415,8 @@ class HybridZeroOptimizer(BaseOptimizer):
                 _define_and_attach(param, reduce_rank)
                 if len(hooks) > 0:
                     assert is_using_ZB
-                    WeightGradStore.register_hook(param, hooks)
+                    # TODO: FIXME!!!
+                    # WeightGradStore.register_hook(param, hooks)
 
     def accumulate_left_grads_after_backward(self):
         if self._isp_communicator is None:

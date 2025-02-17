@@ -126,6 +126,7 @@ def args_sanity_check():
             "1F1B",
             "ZBH1",
             "ZBV",
+            "DUALPIPE",
         ], f"unsupported pp mode {gpc.config.parallel.pipeline['mode']}"
         if gpc.config.parallel.pipeline["mode"] == "ZBV":
             gpc.v_shape = True
@@ -368,7 +369,7 @@ def args_sanity_check():
         if "num_shared_experts" not in model:
             model.num_shared_experts = 1 if getattr(model, "moe_use_residual", False) else 0
             if hasattr(model, "moe_use_residual"):
-                delattr(model, "moe_use_residual")
+                del model["moe_use_residual"]
         if "moe_type" not in model:
             model._add_item("moe_type", "GShard")
         if "moe_layer_kwargs" not in model:

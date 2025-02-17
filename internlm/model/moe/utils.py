@@ -1,11 +1,15 @@
-from typing import Any, Tuple
+from typing import Any, Callable, Tuple
 
 import torch
 from torch import Tensor
 
+from internlm.accelerator import get_accelerator
 from internlm.core.context import ParallelMode
 from internlm.core.context import global_context as gpc
+from internlm.core.parallel.comm.utils import DUMMY_HANDLE_CONST
 from internlm.utils.common import get_current_device
+
+internlm_accelerator = get_accelerator()
 
 
 # Based on https://github.com/pytorch/pytorch/pull/40762
@@ -73,8 +77,91 @@ class AllToAll(torch.autograd.Function):
         return None, None, None, None, None
 
 
+# Based on https://github.com/pytorch/pytorch/pull/40762
+class SchedAndA2APoint(torch.autograd.Function):
+    """
+    All to all communication
+    """
+
+    excutor: Callable = None
+    handler: Callable = None 
+
+    @staticmethod
+    def register_interrupt_handlers(excutor: Callable, handler: Callable):
+        SchedAndA2APoint.excutor = excutor
+        SchedAndA2APoint.handler = handler
+
+    @staticmethod
+    def forward(
+        ctx: Any,
+        inputs: Tensor,
+        output_split_sizes=None,
+        input_split_sizes=None,
+        group: torch.distributed.ProcessGroup = None,
+        async_op=False,
+    ) -> Tensor:  # type: ignore
+
+        ctx.input_shape = inputs.shape
+        ctx.output_split_sizes = output_split_sizes
+        ctx.input_split_sizes = input_split_sizes
+        ctx.group = group
+        ctx.async_op = async_op
+
+        world_size = torch.distributed.get_world_size(group=group)
+        # Bypass the function if we are using only 1 GPU.
+        if world_size == 1:
+            SchedAndA2APoint.excutor(DUMMY_HANDLE_CONST)
+            return inputs, None
+
+        inputs = inputs.contiguous()
+        out = (
+            torch.empty_like(inputs)
+            if output_split_sizes is None
+            else inputs.new_empty(size=[sum(output_split_sizes)] + list(inputs.size()[1:]))
+        )
+        handle = torch.distributed.all_to_all_single(
+            out,
+            inputs,
+            output_split_sizes=output_split_sizes,
+            input_split_sizes=input_split_sizes,
+            group=group,
+            async_op=async_op,
+        )
+        SchedAndA2APoint.excutor(handle)
+
+        # if async_op=False, handle will be None
+        return out, handle
+
+    @staticmethod
+    def backward(ctx: Any, grad_output: Tensor, _) -> Tuple[None, Tensor]:
+        if ctx.needs_input_grad[0]:
+            # Bypass the function if we are using only 1 GPU.
+            world_size = torch.distributed.get_world_size(group=ctx.group)
+            if world_size == 1:
+                return grad_output, None, None, None, None
+
+            grad_output = grad_output.contiguous()
+            out = torch.empty(ctx.input_shape, device=grad_output.device, dtype=grad_output.dtype)
+            handle = torch.distributed.all_to_all_single(
+                out,
+                grad_output,
+                output_split_sizes=ctx.input_split_sizes,
+                input_split_sizes=ctx.output_split_sizes,
+                group=ctx.group,
+                async_op=ctx.async_op,
+            )
+            SchedAndA2APoint.handler(handle)
+            return out, None, None, None, None
+
+        return None, None, None, None, None
+
+
 def all_to_all(x, output_split_sizes=None, input_split_sizes=None, group=None, async_op=False):
-    return AllToAll.apply(x, output_split_sizes, input_split_sizes, group, async_op)
+    if gpc.config.parallel.pipeline.get("mode", "1F1B") == "DUALPIPE":
+        async_op = True  # override async op
+        return SchedAndA2APoint.apply(x, output_split_sizes, input_split_sizes, group, async_op)
+    else:
+        return AllToAll.apply(x, output_split_sizes, input_split_sizes, group, async_op)
 
 
 class moe_gather(torch.autograd.Function):

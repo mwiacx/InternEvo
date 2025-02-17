@@ -4,6 +4,7 @@ https://github.com/microsoft/DeepSpeed/blob/master/deepspeed/moe/experts.py
  Git commit hash: f3943cf9109226ed3ecf2d5dbb639a11cd925555
  We retain the following license from the original files:
 """
+
 import math
 from typing import Callable, Dict, Optional, Tuple
 
@@ -19,7 +20,7 @@ from internlm.model.modules.mlp import new_feed_forward
 from internlm.utils.common import get_current_device
 from internlm.utils.logger import get_logger
 
-from .base_layer import BaseMoELayer
+from .base_layer import BaseMoELayer, CuttableMoELayer
 from .utils import (
     all_to_all,
     gather_from_parallel_region_to_moe,
@@ -128,7 +129,7 @@ def get_capacity(num_tokens: int, num_experts: int, capacity_factor: float, min_
     return capacity
 
 
-class DroplessMoELayer(BaseMoELayer):
+class DroplessMoELayer(CuttableMoELayer):
     """MoELayer module which implements MixtureOfExperts as described in Gshard_."""
 
     def __init__(
@@ -264,6 +265,8 @@ class DroplessMoELayer(BaseMoELayer):
             assert False, "unsupported token dispatch policy"
 
     def forward(self, *inputs: Tensor) -> Tensor:
+        residual = inputs[1]
+
         self.hidden_shape = inputs[0].shape
 
         d_model = inputs[0].shape[-1]
@@ -275,10 +278,10 @@ class DroplessMoELayer(BaseMoELayer):
 
         gates = self.gate(reshaped_inputs)
         expert_weights, indices, tokens_per_expert_before_capacity = self.topk_softmax_with_capacity(gates)
-        self.l_aux = self.load_balancing_loss(tokens_per_expert_before_capacity, gates)
+        l_aux = self.load_balancing_loss(tokens_per_expert_before_capacity, gates)
 
-        (dispatched_input, tokens_per_expert) = self.token_permutation_func(
-            reshaped_inputs, expert_weights, indices, tokens_per_expert_before_capacity
+        (dispatched_input, tokens_per_expert, l_aux, residual, expert_weights) = self.token_permutation_func(
+            reshaped_inputs, expert_weights, indices, tokens_per_expert_before_capacity, l_aux, residual
         )
         if self.use_grouped_mlp:
             expert_output = self.experts(dispatched_input, batch_sizes=tokens_per_expert)
@@ -288,7 +291,7 @@ class DroplessMoELayer(BaseMoELayer):
 
         # Reshape the output tensor
         output = output.view(self.hidden_shape)
-        return output
+        return output,residual, l_aux
 
     def topk_softmax_with_capacity(self, gates):
         expert_weights, indices = torch.topk(gates, self.topk, dim=1)
@@ -605,6 +608,8 @@ class DroplessMoELayer(BaseMoELayer):
         expert_weights: torch.Tensor,
         indices: torch.Tensor,
         tokens_per_expert_before_capacity: torch.Tensor,
+        l_aux: torch.Tensor,
+        residual: torch.Tensor,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Dispatch tokens to local experts using AlltoAll communication.
@@ -641,6 +646,49 @@ class DroplessMoELayer(BaseMoELayer):
         # Perform expert parallel AlltoAll communication
         if self.device_sync_point == "before_ep_alltoall":
             internlm_accelerator.current_stream().synchronize()
+
+        # cut compute graph if using dualpipe scheduler
+        if self.num_local_experts > 1 and self.ep_size > 1:
+            (
+                permutated_local_input_tokens,
+                self.output_splits,
+                self.input_splits,
+                tokens_per_expert,
+                l_aux,
+                residual,
+                expert_weights,
+                split_sizes,
+                self.sort_input_by_local_experts,
+            ) = self.cut_compute_graph(
+                permutated_local_input_tokens,
+                self.output_splits,
+                self.input_splits,
+                tokens_per_expert,
+                l_aux,
+                residual,
+                expert_weights,
+                self.num_global_tokens_per_local_expert_cpu.ravel(),
+                self.sort_input_by_local_experts,
+            )
+        else:
+            (
+                permutated_local_input_tokens,
+                self.output_splits,
+                self.input_splits,
+                tokens_per_expert,
+                l_aux,
+                residual,
+                expert_weights,
+            ) = self.cut_compute_graph(
+                permutated_local_input_tokens,
+                self.output_splits,
+                self.input_splits,
+                tokens_per_expert,
+                l_aux,
+                residual,
+                expert_weights,
+            )
+
         global_input_tokens, _ = all_to_all(
             permutated_local_input_tokens, self.output_splits, self.input_splits, gpc.get_group(ParallelMode.EXPERT)
         )
@@ -649,14 +697,14 @@ class DroplessMoELayer(BaseMoELayer):
         if self.num_local_experts > 1 and self.ep_size > 1:
             global_input_tokens = self.sort_chunks_by_idxs(
                 global_input_tokens,
-                self.num_global_tokens_per_local_expert_cpu.ravel(),
+                split_sizes,
                 self.sort_input_by_local_experts,
             )
 
         if self.device_sync_point == "before_premute_finish":
             internlm_accelerator.current_stream().synchronize()
 
-        return global_input_tokens, tokens_per_expert
+        return global_input_tokens, tokens_per_expert, l_aux, residual, expert_weights
 
     def token_unpermutation_by_alltoall(
         self,
@@ -679,6 +727,21 @@ class DroplessMoELayer(BaseMoELayer):
                 self.restore_output_by_local_experts,
             )
 
+        # cut compute graph for dualpipe scheduler
+        (
+            hidden_states,
+            self.input_splits,
+            self.output_splits,
+            self.reversed_local_input_permutation_mapping,
+            expert_weights,
+        ) = self.cut_compute_graph(
+            hidden_states,
+            self.input_splits,
+            self.output_splits,
+            self.reversed_local_input_permutation_mapping,
+            expert_weights.to(torch.float32),
+        )
+
         # Perform expert parallel AlltoAll communication
         # hidden_states: [SEQL, H] -> [SEQL, H/TP]
 
@@ -691,9 +754,10 @@ class DroplessMoELayer(BaseMoELayer):
             output = grouped_gemm.ops.unpermute(
                 permutated_local_input_tokens,
                 self.reversed_local_input_permutation_mapping,
-                expert_weights.to(torch.float32),
+                expert_weights,
             )
         else:
+            assert False, "NYI"
             output = self.unpermute(
                 permutated_local_input_tokens,
                 self.reversed_local_input_permutation_mapping,
@@ -734,7 +798,7 @@ class DroplessMoELayer(BaseMoELayer):
         """
 
         num_local_tokens_per_expert = torch.histc(indices, bins=self.num_experts, min=0, max=self.num_experts)
-        self.l_aux = self.load_balancing_loss(num_local_tokens_per_expert, self.gates)
+        l_aux = self.load_balancing_loss(num_local_tokens_per_expert, self.gates)
         # Permute the tokens across the expert parallel devices.
         if self.ep_size > 1:
             # local_indices calculation
@@ -790,7 +854,7 @@ class DroplessMoELayer(BaseMoELayer):
             local_hidden_states, local_indices
         )
 
-        return permuted_local_hidden_states, tokens_per_expert
+        return permuted_local_hidden_states, tokens_per_expert, l_aux
 
     def token_unpermutation_by_all_gather(
         self, hidden_states: torch.Tensor, expert_weight: torch.Tensor = None

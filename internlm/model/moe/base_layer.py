@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING, Callable, Tuple, Union
 
 import torch
 from torch import Tensor
@@ -43,3 +43,21 @@ class BaseMoELayer(Base):
             for _, param in expert.named_parameters():
                 param.is_expert = True
                 param.group_name = expert_group_name
+
+
+class CuttableMoELayer(BaseMoELayer):
+    """
+    Compute graph cuttable moe layer.
+    """
+
+    _innter_graph_cutter: Callable = None
+
+    @classmethod
+    def register_cls_cutter(cls, cutter: Callable) -> None:
+        cls._innter_graph_cutter = cutter
+
+    def cut_compute_graph(self, *tensors: Tuple[torch.Tensor]) -> Tuple[torch.Tensor]:
+        if self._innter_graph_cutter is None:
+            return tensors
+        else:
+            return self._innter_graph_cutter(*tensors)

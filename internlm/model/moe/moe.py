@@ -28,6 +28,19 @@ def new_moe_layer(moe_type: str, **kwargs):
         raise ValueError(f"Unsupported model type: {moe_type}")
 
 
+def register_moe_graph_cutter(moe_type, cutter):
+    if moe_type == "GShard":
+        assert False, "GShard cutter is NYI."
+    elif moe_type == "Dropless":
+        DroplessMoELayer.register_cls_cutter(cutter)
+    elif moe_type == "MegaBlock":
+        assert False, "MegaBlock cutter is NYI."
+    elif moe_type == "MegaBlock-Dropless":
+        assert False, "MegaBlock-Dropless cutter is NYI."
+    else:
+        raise ValueError(f"Unsupported model type: {moe_type}")
+
+
 class MoEBase(torch.nn.Module):
     """Initialize an MoE base layer.
 
@@ -165,7 +178,7 @@ class MoE(MoEBase):
         if self.num_shared_experts > 0:
             self.coefficient = torch.nn.Linear(in_features, 2)
 
-    def forward(self, hidden_states, used_token=None):
+    def forward(self, hidden_states, residual, used_token=None):
         """MoE forward
 
         Arguments:
@@ -181,7 +194,7 @@ class MoE(MoEBase):
 
             * exp_counts (int): expert count
         """
-        output = self.moe_layer(hidden_states, used_token)
+        output, residual, l_aux = self.moe_layer(hidden_states, residual, used_token)
         if self.num_shared_experts > 0:
             # Residual MoE
             output_mlp = self.residual_mlp(hidden_states)
@@ -190,7 +203,7 @@ class MoE(MoEBase):
             coef = self.coefficient(hidden_states)
             coef = torch.nn.functional.softmax(coef, dim=-1)
             output = output * coef[..., 0:1] + output_mlp * coef[..., 1:]
-        return output, self.moe_layer.l_aux, self.moe_layer.exp_counts
+        return output, residual, l_aux, self.moe_layer.exp_counts
 
 
 class Qwen2MoE(MoEBase):
@@ -264,7 +277,7 @@ class Qwen2MoE(MoEBase):
 
             * exp_counts (int): expert count
         """
-        output = self.moe_layer(hidden_states, used_token)
+        output, l_aux = self.moe_layer(hidden_states, used_token)
         if self.num_shared_experts > 0:
             # Residual MoE
             output_mlp = self.residual_mlp(hidden_states)
@@ -273,4 +286,4 @@ class Qwen2MoE(MoEBase):
             coef = self.coefficient(hidden_states)
             output_mlp = F.sigmoid(coef) * output_mlp
             output = output + output_mlp
-        return output, self.moe_layer.l_aux, self.moe_layer.exp_counts
+        return output, l_aux, self.moe_layer.exp_counts

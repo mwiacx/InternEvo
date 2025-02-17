@@ -227,8 +227,15 @@ def pipeline_parallel_sharding_wrapper(
     pipeline_size = gpc.get_world_size(ParallelMode.PIPELINE)
     pipeline_rank = gpc.get_local_rank(ParallelMode.PIPELINE)
 
+    if gpc.config.parallel.pipeline.get("mode", "1F1B") == "DUALPIPE":
+        num_chunks = 1
+
     all_parts = partition_uniform(num_layers, pipeline_size, num_chunks)
-    parts = all_parts[pipeline_rank]
+
+    if gpc.config.parallel.pipeline.get("mode", "1F1B") == "DUALPIPE":
+        parts = all_parts[pipeline_rank] + all_parts[pipeline_size - pipeline_rank - 1]
+    else:
+        parts = all_parts[pipeline_rank]
 
     if gpc.is_rank_for_log():
         logger.info("The layer sharding is %r.", all_parts)

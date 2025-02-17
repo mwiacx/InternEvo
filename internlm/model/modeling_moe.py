@@ -238,7 +238,7 @@ class Internlm1MoEDecoder(nn.Module):
             hidden_states = self.mlp(hidden_states)
             moe_loss = torch.tensor(0.0, device=hidden_states.device, dtype=hidden_states.dtype)
         else:  # MoE output
-            hidden_states, moe_loss, _ = self.mlp(hidden_states)
+            hidden_states, residual, moe_loss, _ = self.mlp(hidden_states, residual)
 
         return hidden_states + residual, moe_loss
 
@@ -377,7 +377,7 @@ class Internlm1MoE(BaseModel):
     def forward(self, hidden_states=None, input_ids=None, **kwargs):
         # attention_mask: compute attention on the places where the value is 1
         # old condition may fail when use shared embedding
-        if gpc.is_pipeline_first_stage() and input_ids is not None:
+        if hasattr(self, "embedding") and input_ids is not None:
             hidden_states = self.embedding(input_ids)
             if self.embed_grad_scale != 1:
                 hidden_states = (
